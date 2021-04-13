@@ -23,6 +23,14 @@
 #   -i followed by influxdb_size
 #   -c followed by storage_class
 #   -x followed by expose_service (y or n)
+#
+#   4. AWS support
+#      Usage: ./install.sh --image-path 88888976.dkr.ecr.us-east-1.amazonaws.com/888888-37c8-4328-91b2-62c1acd2a04b/cg-1231030144/federatorai-operator:4.2-latest
+#                   --cluster awsmp-new --region us-west-2
+#
+#   --image-path <space> AWS ECR url
+#   --cluster <space> AWS EKS cluster name
+#   --region <space> AWS region
 #################################################################################################################
 
 is_pod_ready()
@@ -53,6 +61,15 @@ pods_ready()
 
 leave_prog()
 {
+    # Clean up
+    if [ -d "$tgz_folder_name" ]; then
+        rm -rf $tgz_folder_name
+    fi
+
+    if [ -f "$tgz_name" ]; then
+        rm -f $tgz_name
+    fi
+
     echo -e "\n$(tput setaf 5)Downloaded YAML files are located under $file_folder $(tput sgr 0)"
     cd $current_location > /dev/null
 }
@@ -69,7 +86,7 @@ webhook_reminder()
 {
     if [ "$openshift_minor_version" != "" ]; then
         echo -e "\n========================================"
-        echo -e "$(tput setaf 9)Note!$(tput setaf 10) The following $(tput setaf 9)two admission plugins $(tput setaf 10)need to be enabled on $(tput setaf 9)each master node $(tput setaf 10)to make Email Notification work properly."
+        echo -e "$(tput setaf 9)Note!$(tput setaf 10) The following $(tput setaf 9)two admission plugins $(tput setaf 10)need to be enabled on $(tput setaf 9)each master node $(tput setaf 10)to make Federator.ai work properly."
         echo -e "$(tput setaf 6)1. ValidatingAdmissionWebhook 2. MutatingAdmissionWebhook$(tput sgr 0)"
         echo -e "Steps: (On every master nodes)"
         echo -e "A. Edit /etc/origin/master/master-config.yaml"
@@ -371,9 +388,9 @@ setup_data_adapter_secret()
         modified="y"
         while [ "$input_api_key" = "" ] || [ "$input_app_key" = "" ]
         do
-            read -r -p "$(tput setaf 2)Please input Datadog API key: $(tput sgr 0)" input_api_key </dev/tty
+            read -r -p "$(tput setaf 2)Please enter Datadog API key: $(tput sgr 0)" input_api_key </dev/tty
             input_api_key=`echo -n "$input_api_key" | base64`
-            read -r -p "$(tput setaf 2)Please input Datadog Application key: $(tput sgr 0)" input_app_key </dev/tty
+            read -r -p "$(tput setaf 2)Please enter Datadog Application key: $(tput sgr 0)" input_app_key </dev/tty
             input_app_key=`echo -n "$input_app_key" | base64`
         done
     else
@@ -389,12 +406,12 @@ setup_data_adapter_secret()
             while [ "$input_api_key" = "" ] || [ "$input_app_key" = "" ]
             do
                 default="$secret_api_key"
-                read -r -p "$(tput setaf 2)Please input Datadog API key [current: $default]: $(tput sgr 0)" input_api_key </dev/tty
+                read -r -p "$(tput setaf 2)Please enter Datadog API key [current: $default]: $(tput sgr 0)" input_api_key </dev/tty
                 input_api_key=${input_api_key:-$default}
                 input_api_key=`echo -n "$input_api_key" | base64`
 
                 default="$secret_app_key"
-                read -r -p "$(tput setaf 2)Please input Datadog Application key [current: $default]: $(tput sgr 0)" input_app_key </dev/tty
+                read -r -p "$(tput setaf 2)Please enter Datadog Application key [current: $default]: $(tput sgr 0)" input_app_key </dev/tty
                 input_app_key=${input_app_key:-$default}
                 input_app_key=`echo -n "$input_app_key" | base64`
             done
@@ -577,10 +594,7 @@ download_cr_files()
 
     for file_name in "${cr_files[@]}"
     do
-        if ! curl -sL --fail https://raw.githubusercontent.com/containers-ai/prophetstor/${tag_number}/deploy/example/${file_name} -O; then
-            echo -e "\n$(tput setaf 1)Abort, download $file_name sample file failed!!!$(tput sgr 0)"
-            exit 3
-        fi
+        cp $tgz_folder_name/deploy/example/$file_name .
     done
 }
 
@@ -593,10 +607,7 @@ download_alamedascaler_files()
 
     for pool in "${src_pool[@]}"
     do
-        if ! curl -sL --fail https://raw.githubusercontent.com/containers-ai/prophetstor/${tag_number}/deploy/example/${pool}/${alamedascaler_filename} -O; then
-            echo -e "\n$(tput setaf 1)Abort, download $alamedascaler_filename sample file from $pool folder failed!!!$(tput sgr 0)"
-            exit 3
-        fi
+        cp $tgz_folder_name/deploy/example/$pool/$alamedascaler_filename .
         if [ "$pool" = "kafka" ]; then
             mv $alamedascaler_filename alamedascaler_kafka.yaml
         elif [ "$pool" = "nginx" ]; then
@@ -610,7 +621,7 @@ download_alamedascaler_files()
 backup_configuration()
 {
     script_name="backup-restore.sh"
-    backup_folder="/tmp/configuration_backup"
+    backup_folder="$save_path/configuration_backup"
     default="y"
     read -r -p "$(tput setaf 2)Do you want to backup your configuration before upgrading Federator.ai? [default: $default]: $(tput sgr 0)" do_backup </dev/tty
     do_backup=${do_backup:-$default}
@@ -633,7 +644,7 @@ backup_configuration()
         fi
 
         default="$backup_folder"
-        read -r -p "$(tput setaf 2)Please input path for storing backup configuration: [default: $default] $(tput sgr 0)" backup_path </dev/tty
+        read -r -p "$(tput setaf 2)Please enter the path for storing backup configuration: [default: $default] $(tput sgr 0)" backup_path </dev/tty
         backup_path=${backup_path:-$default}
         backup_path=$(echo "$backup_path" | tr '[:upper:]' '[:lower:]')
         backup_folder=$backup_path
@@ -693,9 +704,151 @@ backup_configuration()
 #     fi
 # }
 
+check_aws_version()
+{
+    awscli_required_version="1.16.283"
+    awscli_required_version_major=`echo $awscli_required_version | cut -d'.' -f1`
+    awscli_required_version_minor=`echo $awscli_required_version | cut -d'.' -f2`
+    awscli_required_version_build=`echo $awscli_required_version | cut -d'.' -f3`
 
-while getopts "t:n:e:p:s:l:d:c:x:o" o; do
+    # aws --version: aws-cli/2.0.0dev0
+    awscli_version=`aws --version 2>&1 | cut -d' ' -f1 | cut -d'/' -f2`
+    awscli_version_major=`echo $awscli_version | cut -d'.' -f1`
+    awscli_version_minor=`echo $awscli_version | cut -d'.' -f2`
+    awscli_version_build=`echo $awscli_version | cut -d'.' -f3`
+    awscli_version_build=${awscli_version_build%%[^0-9]*}   # remove everything from the first non-digit
+
+    if [ "$awscli_version_major" -gt "$awscli_required_version_major" ]; then
+        return 0
+    fi
+
+    if [ "$awscli_version_major" = "$awscli_required_version_major" ] && \
+        [ "$awscli_version_minor" -gt "$awscli_required_version_minor" ]; then
+            return 0
+    fi
+
+    if [ "$awscli_version_major" = "$awscli_required_version_major" ] && \
+        [ "$awscli_version_minor" = "$awscli_required_version_minor" ] && \
+        [ "$awscli_version_build" -ge "$awscli_required_version_build" ]; then
+            return 0
+    fi
+
+    echo -e "\n$(tput setaf 10)Error! AWS CLI version must be $awscli_required_version or greater.$(tput sgr 0)"
+    exit 9
+}
+
+setup_aws_iam_role()
+{
+    REGION_NAME=$aws_region
+    CLUSTER_NAME=$eks_cluster
+
+    # Create an OIDC provider for the cluster
+    ISSUER_URL=$(aws eks describe-cluster \
+                    --name $CLUSTER_NAME \
+                    --region $REGION_NAME \
+                    --query cluster.identity.oidc.issuer \
+                    --output text )
+    ISSUER_URL_WITHOUT_PROTOCOL=$(echo $ISSUER_URL | sed 's/https:\/\///g' )
+    ISSUER_HOSTPATH=$(echo $ISSUER_URL_WITHOUT_PROTOCOL | sed "s/\/id.*//" )
+    # Grab all certificates associated with the issuer hostpath and save them to files. The root certificate is last
+    rm -f *.crt || echo "No files that match *.crt exist"
+    ROOT_CA_FILENAME=$(openssl s_client -showcerts -connect $ISSUER_HOSTPATH:443 < /dev/null 2>&1 \
+                        | awk '/BEGIN/,/END/{ if(/BEGIN/){a++}; out="cert"a".crt"; print > out } END {print "cert"a".crt"}')
+    ROOT_CA_FINGERPRINT=$(openssl x509 -fingerprint -noout -in $ROOT_CA_FILENAME \
+                        | sed 's/://g' | sed 's/SHA1 Fingerprint=//')
+    result=$(aws iam create-open-id-connect-provider \
+                --url $ISSUER_URL \
+                --thumbprint-list $ROOT_CA_FINGERPRINT \
+                --client-id-list sts.amazonaws.com \
+                --region $REGION_NAME 2>&1 | grep EntityAlreadyExists)
+    if [ "$result" != "" ]; then
+        echo "The provider for $ISSUER_URL already exists"
+    fi
+
+    ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text)
+    PROVIDER_ARN="arn:aws:iam::$ACCOUNT_ID:oidc-provider/$ISSUER_URL_WITHOUT_PROTOCOL"
+    ROLE_NAME="FederatorAI-$CLUSTER_NAME"
+    POLICY_NAME="AWSMarketplaceMetering-$CLUSTER_NAME"
+    POLICY_ARN="arn:aws:iam::$ACCOUNT_ID:policy/$POLICY_NAME"
+
+    # Update trust relationships of pod execution roles so pods on our cluster can assume them
+    cat > trust-policy.json << EOF
+{
+    "Version": "2012-10-17",
+    "Statement": [
+        {
+            "Effect": "Allow",
+            "Principal": {
+                "Federated": "$PROVIDER_ARN"
+            },
+            "Action": "sts:AssumeRoleWithWebIdentity"
+        }
+    ]
+}
+EOF
+
+    result=$(aws iam create-role \
+                --role-name $ROLE_NAME \
+                --assume-role-policy-document file://trust-policy.json 2>&1 | grep EntityAlreadyExists)
+    if [ "$result" != "" ]; then
+        echo "The IAM role $ROLE_NAME already exists"
+    fi
+
+    # Attach policy to give required permission to call RegisterUsage API
+cat > iam-policy.json << EOF
+{
+    "Version": "2012-10-17",
+    "Statement": [
+        {
+            "Action": [
+                "aws-marketplace:RegisterUsage"
+            ],
+            "Effect": "Allow",
+            "Resource": "*"
+        }
+    ]
+}
+EOF
+    result=$(aws iam create-policy \
+        --policy-name $POLICY_NAME \
+        --policy-document file://iam-policy.json 2>&1 | grep EntityAlreadyExists)
+    if [ "$result" != "" ]; then
+        echo "The policy $POLICY_NAME already exists"
+    fi
+
+    aws iam attach-role-policy --role-name $ROLE_NAME --policy-arn $POLICY_ARN
+}
+
+while getopts "t:n:e:p:s:l:d:c:x:o-:" o; do
     case "${o}" in
+        -)
+            case "${OPTARG}" in
+                image-path)
+                    ecr_url="${!OPTIND}"; OPTIND=$(( $OPTIND + 1 ))
+                    if [ "$ecr_url" = "" ]; then
+                        echo "Error! Missing --${OPTARG} value"
+                        exit
+                    fi
+                    ;;
+                cluster)
+                    eks_cluster="${!OPTIND}"; OPTIND=$(( $OPTIND + 1 ))
+                    if [ "$eks_cluster" = "" ]; then
+                        echo "Error! Missing --${OPTARG} value"
+                        exit
+                    fi
+                    ;;
+                region)
+                    aws_region="${!OPTIND}"; OPTIND=$(( $OPTIND + 1 ))
+                    if [ "$aws_region" = "" ]; then
+                        echo "Error! Missing --${OPTARG} value"
+                        exit
+                    fi
+                    ;;
+                *)
+                    echo "Unknown option --${OPTARG}"
+                    exit
+                    ;;
+            esac;;
         o)
             offline_mode_enabled="y"
             ;;
@@ -735,11 +888,28 @@ while getopts "t:n:e:p:s:l:d:c:x:o" o; do
     esac
 done
 
+# ecr_url, eks_cluster, aws_region all are empty or all have values
+if [ "$ecr_url" != "" ] && [ "$eks_cluster" != "" ] && [ "$aws_region" != "" ]; then
+    aws_mode="y"
+elif [ "$ecr_url" != "" ] || [ "$eks_cluster" != "" ] || [ "$aws_region" != "" ]; then
+    if [ "$ecr_url" = "" ]; then
+        echo -e "\n$(tput setaf 1)Error! Missing --image-path parameter in AWS mode.$(tput sgr 0)"
+        exit
+    elif [ "$eks_cluster" = "" ]; then
+        echo -e "\n$(tput setaf 1)Error! Missing --cluster parameter in AWS mode.$(tput sgr 0)"
+        exit
+    elif [ "$aws_region" = "" ]; then
+        echo -e "\n$(tput setaf 1)Error! Missing --region parameter in AWS mode.$(tput sgr 0)"
+        exit
+    fi
+fi
+
 [ "${t_arg}" = "" ] && silent_mode_disabled="y"
 [ "${n_arg}" = "" ] && silent_mode_disabled="y"
 #[ "${e_arg}" = "" ] && silent_mode_disabled="y"
 #[ "${p_arg}" = "" ] && silent_mode_disabled="y"
 [ "${s_arg}" = "" ] && silent_mode_disabled="y"
+[ "${FEDERATORAI_FILE_PATH}" = "" ] && silent_mode_disabled="y"
 [ "${s_arg}" = "persistent" ] && [ "${l_arg}" = "" ] && silent_mode_disabled="y"
 [ "${s_arg}" = "persistent" ] && [ "${d_arg}" = "" ] && silent_mode_disabled="y"
 [ "${s_arg}" = "persistent" ] && [ "${c_arg}" = "" ] && silent_mode_disabled="y"
@@ -781,6 +951,12 @@ fi
 echo "Checking environment version..."
 check_version
 echo "...Passed"
+
+if [ "$aws_mode" = "y" ]; then
+    echo -e "Checking AWS CLI version..."
+    check_aws_version
+    echo -e "...Passed\n"
+fi
 
 if [ "$offline_mode_enabled" != "y" ]; then
     which curl > /dev/null 2>&1
@@ -842,6 +1018,34 @@ if [ "$previous_alameda_namespace" != "" ];then
     fi
 fi
 
+script_located_path=$(dirname $(readlink -f "$0"))
+if [ "$FEDERATORAI_FILE_PATH" = "" ]; then
+    # Try to find existing path
+    if [[ $script_located_path =~ .*/federatorai/repo/.* ]]; then
+        save_path="$(dirname "$(dirname "$(dirname "$(realpath $script_located_path)")")")"
+    else
+        # Ask for input
+        default="/opt"
+        read -r -p "$(tput setaf 2)Please enter the path of Federator.ai installation directory [default: $default]: $(tput sgr 0) " save_path </dev/tty
+        save_path=${save_path:-$default}
+        save_path=$(echo "$save_path" | tr '[:upper:]' '[:lower:]')
+        save_path="$save_path/federatorai"
+    fi
+else
+    save_path="$FEDERATORAI_FILE_PATH"
+fi
+
+file_folder="$save_path/installation"
+if [ -d "$file_folder" ]; then
+    rm -rf $file_folder
+fi
+
+mkdir -p $file_folder
+if [ ! -d "$file_folder" ]; then
+    echo -e "\n$(tput setaf 1)Error! Failed to create folder to save Federator.ai installation files.$(tput sgr 0)"
+    exit 3
+fi
+
 if [ "$ALAMEDASERVICE_FILE_PATH" = "" ]; then
     if [ "$silent_mode_disabled" = "y" ];then
 
@@ -852,7 +1056,7 @@ if [ "$ALAMEDASERVICE_FILE_PATH" = "" ]; then
             # Check if tag number is specified
             if [ "$specified_tag_number" = "" ]; then
                 tag_number=""
-                read -r -p "$(tput setaf 2)Please input Federator.ai Operator tag:$(tput sgr 0) " tag_number </dev/tty
+                read -r -p "$(tput setaf 2)Please enter Federator.ai Operator tag:$(tput sgr 0) " tag_number </dev/tty
             else
                 tag_number=$specified_tag_number
             fi
@@ -883,6 +1087,7 @@ if [ "$ALAMEDASERVICE_FILE_PATH" = "" ]; then
         echo -e "\n----------------------------------------"
         echo "tag_number=$specified_tag_number"
         echo "install_namespace=$install_namespace"
+        echo "save_path=$save_path"
         #echo "enable_execution=$enable_execution"
         #echo "prometheus_address=$prometheus_address"
         echo "storage_type=$storage_type"
@@ -909,54 +1114,81 @@ else
     fi
 fi
 
-file_folder="/tmp/install-op"
 [ "$max_wait_pods_ready_time" = "" ] && max_wait_pods_ready_time=900  # maximum wait time for pods become ready
 
-rm -rf $file_folder
-mkdir -p $file_folder
 current_location=`pwd`
-script_located_path=$(dirname $(readlink -f "$0"))
 cd $file_folder
+
+if [ "$aws_mode" = "y" ]; then
+    # Setup AWS IAM role for service account
+    echo -e "\n$(tput setaf 2)Setting AWS IAM role for service account...$(tput sgr 0)"
+    setup_aws_iam_role
+    role_arn=$(aws iam get-role --role-name ${ROLE_NAME} --query Role.Arn --output text)
+    echo "Done"
+fi
 
 if [ "$need_upgrade" = "y" ];then
     source_full_tag=$(echo "$previous_tag"|cut -d '-' -f1)
-    source_tag_first_digit=${source_full_tag%%.*}
-    source_tag_last_digit=${source_full_tag##*.}
-    source_tag_middle_digit=${source_full_tag##$source_tag_first_digit.}
-    source_tag_middle_digit=${source_tag_middle_digit%%.$source_tag_last_digit}
-    source_tag_first_digit=$(echo $source_tag_first_digit|cut -d 'v' -f2)
+    if [ "$source_full_tag" = "dev" ]; then
+        source_tag_first_digit=""
+        source_tag_middle_digit=""
+        source_tag_last_digit=""
+    else
+        source_tag_first_digit=${source_full_tag%%.*}
+        source_tag_last_digit=${source_full_tag##*.}
+        source_tag_middle_digit=${source_full_tag##$source_tag_first_digit.}
+        source_tag_middle_digit=${source_tag_middle_digit%%.$source_tag_last_digit}
+        source_tag_first_digit=$(echo $source_tag_first_digit|cut -d 'v' -f2)
+
+    fi
 
     target_full_tag=$(echo "$tag_number"|cut -d '-' -f1)
-    target_tag_first_digit=${target_full_tag%%.*}
-    target_tag_last_digit=${target_full_tag##*.}
-    target_tag_middle_digit=${target_full_tag##$target_tag_first_digit.}
-    target_tag_middle_digit=${target_tag_middle_digit%%.$target_tag_last_digit}
-    target_tag_first_digit=$(echo $target_tag_first_digit|cut -d 'v' -f2)
+    if [ "$target_full_tag" = "dev" ]; then
+        target_tag_first_digit=""
+        target_tag_middle_digit=""
+        target_tag_last_digit=""
+    else
+        target_tag_first_digit=${target_full_tag%%.*}
+        target_tag_last_digit=${target_full_tag##*.}
+        target_tag_middle_digit=${target_full_tag##$target_tag_first_digit.}
+        target_tag_middle_digit=${target_tag_middle_digit%%.$target_tag_last_digit}
+        target_tag_first_digit=$(echo $target_tag_first_digit|cut -d 'v' -f2)
+    fi
 
     # Only do backup when major or middle digit bigger than previous build
-    if [ "$target_tag_first_digit" -gt "$source_tag_first_digit" ] || [ "$target_tag_middle_digit" -gt "$source_tag_middle_digit" ]; then
+    if [ "0${target_tag_first_digit}" -gt "0${source_tag_first_digit}" ] || [ "0${target_tag_middle_digit}" -gt "0${source_tag_middle_digit}" ]; then
         backup_configuration
     fi
 fi
 
 if [ "$offline_mode_enabled" != "y" ]; then
-    operator_files=`curl --silent https://api.github.com/repos/containers-ai/prophetstor/contents/deploy/upstream?ref=${tag_number} 2>&1|grep "\"name\":"|cut -d ':' -f2|cut -d '"' -f2`
-    if [ "$operator_files" = "" ]; then
-        echo -e "\n$(tput setaf 1)Abort, download operator file list failed!!!$(tput sgr 0)"
+    echo -e "\n$(tput setaf 2)Downloading ${tag_number} tgz file ...$(tput sgr 0)"
+    tgz_name="${tag_number}.tar.gz"
+    if ! curl -sL --fail https://github.com/containers-ai/prophetstor/archive/${tgz_name} -O; then
+        echo -e "\n$(tput setaf 1)Error, download file $tgz_name failed!!!$(tput sgr 0)"
         echo "Please check tag name and network"
         exit 1
     fi
 
-    for file in `echo $operator_files`
-    do
-        echo "Downloading file $file ..."
-        if ! curl -sL --fail https://raw.githubusercontent.com/containers-ai/prophetstor/${tag_number}/deploy/upstream/${file} -O; then
-            echo -e "\n$(tput setaf 1)Abort, download file failed!!!$(tput sgr 0)"
-            echo "Please check tag name and network"
-            exit 1
-        fi
-        echo "Done"
-    done
+    tar -zxf $tgz_name
+    if [ "$?" != "0" ];then
+        echo -e "\n$(tput setaf 1)Error, untar $tgz_name file failed!!!$(tput sgr 0)"
+        exit 3
+    fi
+
+    tgz_folder_name=$(tar -tzf $tgz_name | head -1 | cut -f1 -d"/")
+    if [ "$tgz_folder_name" = "" ]; then
+        echo -e "\n$(tput setaf 1)Error, failed to get extracted directory name.$(tput sgr 0)"
+        exit 3
+    fi
+
+    cp $tgz_folder_name/deploy/upstream/* .
+
+    if [[ "`ls [00-11]*.yaml 2>/dev/null|wc -l`" -lt "12" ]]; then
+        echo -e "\n$(tput setaf 1)Abort, operator files number is less than 12.$(tput sgr 0)"
+        exit 1
+    fi
+    echo "Done"
 else
     # Offline Mode
     # Copy Federator.ai operator 00-11 yamls
@@ -972,7 +1204,17 @@ fi
 
 # Modify federator.ai operator yaml(s)
 # for tag
-sed -i "s/:latest$/:${tag_number}/g" 03*.yaml
+if [ "$aws_mode" = "y" ]; then
+    sed -i "s|quay.io/prophetstor/federatorai-operator-ubi:latest|$ecr_url|g" 03*.yaml
+    # Change command to /start.sh
+    sed -i "/- federatorai-operator/ {n; :a; /- federatorai-operator/! {N; ba;}; s/- federatorai-operator/- \/start.sh/; :b; n; $! bb}" 03*.yaml
+cat >> 01*.yaml << __EOF__
+  annotations:
+    eks.amazonaws.com/role-arn: ${role_arn}
+__EOF__
+else
+    sed -i "s/:latest$/:${tag_number}/g" 03*.yaml
+fi
 
 # Specified alternative container image location
 if [ "${RELATED_IMAGE_URL_PREFIX}" != "" ]; then
@@ -993,6 +1235,20 @@ if [ "${ENABLE_RESOURCE_REQUIREMENT}" = "y" ]; then
     sed -i -e "/image: /a\          resources:\n            limits:\n              cpu: 4000m\n              memory: 8000Mi\n            requests:\n              cpu: 100m\n              memory: 100Mi" `ls 03*.yaml`
 fi
 
+if [ "$need_upgrade" = "y" ];then
+    # for upgrade - update owner of influxdb
+    current_influxdb_owner="$(kubectl -n $install_namespace exec alameda-influxdb-0 -- id -u)"
+    if [ "$current_influxdb_owner" = "0" ]; then
+        # Currently, the owner is root
+        echo -e "\n$(tput setaf 2)Updating InfluxDB owner...$(tput sgr 0)"
+        kubectl -n $install_namespace exec alameda-influxdb-0 -- chown -R 1001:1001 /var/log/influxdb
+        kubectl -n $install_namespace exec alameda-influxdb-0 -- chown -R 1001:1001 /var/lib/influxdb
+        kubectl -n $install_namespace exec alameda-influxdb-0 -- chmod -R 777 /var/log/influxdb
+        kubectl -n $install_namespace exec alameda-influxdb-0 -- chmod -R 777 /var/lib/influxdb
+        echo "Done"
+    fi
+fi
+
 echo -e "\n$(tput setaf 2)Applying Federator.ai operator yaml files...$(tput sgr 0)"
 
 if [ "$need_upgrade" = "y" ];then
@@ -1000,23 +1256,49 @@ if [ "$need_upgrade" = "y" ];then
 
     while read deploy_name deploy_ns useless
     do
-        kubectl delete deployment $deploy_name -n $deploy_ns
-        if [ "$?" != "0" ]; then
-            echo -e "\n$(tput setaf 1)Error in deleting old Federator.ai operator deployment $deploy_name in ns $deploy_ns.$(tput sgr 0)"
-            exit 8
+        if [ "$deploy_name" != "" ] && [ "$deploy_ns" != "" ]; then
+            kubectl delete deployment $deploy_name -n $deploy_ns
+            if [ "$?" != "0" ]; then
+                echo -e "\n$(tput setaf 1)Error in deleting old Federator.ai operator deployment $deploy_name in ns $deploy_ns.$(tput sgr 0)"
+                exit 8
+            fi
         fi
-    done <<< "$(kubectl get deployment --all-namespaces --output jsonpath='{range .items[*]}{"\n"}{.metadata.name}{"\t"}{.metadata.namespace}{"\t"}{range .spec.template.spec.containers[*]}{.image}{end}{end}' 2>/dev/null | grep 'federatorai-operator-ubi')"
+    done <<< "$(kubectl get deployment --all-namespaces --output jsonpath='{range .items[*]}{"\n"}{.metadata.name}{"\t"}{.metadata.namespace}{"\t"}{range .spec.template.spec.containers[*]}{.image}{end}{end}' 2>/dev/null | grep '^federatorai-operator')"
 
 fi
 
-for yaml_fn in `ls [0-9]*.yaml | sort -n`; do
-    echo "Applying ${yaml_fn}..."
-    kubectl apply -f ${yaml_fn}
+if [ "$need_upgrade" = "y" ];then
+    for yaml_fn in `ls [0-9]*.yaml | sort -n`; do
+        case "$yaml_fn" in
+        *03-*)
+          later_yaml="$yaml_fn"
+          echo "Delay applying $yaml_fn"
+          continue
+          ;;
+        esac
+        echo "Applying ${yaml_fn}..."
+        kubectl apply -f ${yaml_fn}
+        if [ "$?" != "0" ]; then
+            echo -e "\n$(tput setaf 1)Error in applying yaml file ${yaml_fn}.$(tput sgr 0)"
+            exit 8
+        fi
+    done
+    echo "Applying ${later_yaml}..."
+    kubectl apply -f ${later_yaml}
     if [ "$?" != "0" ]; then
-        echo -e "\n$(tput setaf 1)Error in applying yaml file ${yaml_fn}.$(tput sgr 0)"
+        echo -e "\n$(tput setaf 1)Error in applying yaml file ${later_yaml}.$(tput sgr 0)"
         exit 8
     fi
-done
+else
+    for yaml_fn in `ls [0-9]*.yaml | sort -n`; do
+        echo "Applying ${yaml_fn}..."
+        kubectl apply -f ${yaml_fn}
+        if [ "$?" != "0" ]; then
+            echo -e "\n$(tput setaf 1)Error in applying yaml file ${yaml_fn}.$(tput sgr 0)"
+            exit 8
+        fi
+    done
+fi
 
 if [ "$need_upgrade" != "y" ];then
     wait_until_pods_ready $max_wait_pods_ready_time 30 $install_namespace 1
@@ -1030,11 +1312,8 @@ fi
 if [ "$ALAMEDASERVICE_FILE_PATH" = "" ]; then
     alamedaservice_example="alamedaservice_sample.yaml"
     if [ "$offline_mode_enabled" != "y" ]; then
-        echo -e "\nDownloading Federator.ai CR sample files ..."
-        if ! curl -sL --fail https://raw.githubusercontent.com/containers-ai/prophetstor/${tag_number}/deploy/example/${alamedaservice_example} -O; then
-            echo -e "\n$(tput setaf 1)Abort, download alamedaservice sample file failed!!!$(tput sgr 0)"
-            exit 2
-        fi
+        echo -e "\nDownloading Federator.ai alamedaservice sample file ..."
+        cp $tgz_folder_name/deploy/example/$alamedaservice_example .
         download_cr_files
         echo "Done"
         echo -e "\nDownloading Federator.ai alamedascaler sample files ..."
@@ -1095,8 +1374,8 @@ if [ "$ALAMEDASERVICE_FILE_PATH" = "" ]; then
             done
 
             if [[ "$storage_type" == "persistent" ]]; then
-                default="10"
-                read -r -p "$(tput setaf 127)Specify log storage size [e.g., 10 for 10GB, default: 10]: $(tput sgr 0)" log_size </dev/tty
+                default="2"
+                read -r -p "$(tput setaf 127)Specify log storage size [e.g., 2 for 2GB, default: 2]: $(tput sgr 0)" log_size </dev/tty
                 log_size=${log_size:-$default}
                 default="10"
                 read -r -p "$(tput setaf 127)Specify AI engine storage size [e.g., 10 for 10GB, default: 10]: $(tput sgr 0)" aiengine_size </dev/tty
@@ -1345,7 +1624,7 @@ __EOF__
         while [ "$_count" -gt "0" ]
         do
             echo -e "Update alamedaservice..."
-            if [ "$target_tag_first_digit" -gt "$source_tag_first_digit" ] || [ "$target_tag_middle_digit" -gt "$source_tag_middle_digit" ]; then
+            if [ "0${target_tag_first_digit}" -gt "0${source_tag_first_digit}" ] || [ "0${target_tag_middle_digit}" -gt "0${source_tag_middle_digit}" ]; then
                 # Upgrade from older version, patch version and enableExecution
                 kubectl patch alamedaservice $previous_alamedaservice -n $install_namespace --type merge --patch "{\"spec\":{\"enableExecution\": true,\"version\": \"$tag_number\"}}"
             else
@@ -1437,6 +1716,15 @@ echo "Processing..."
 check_if_pod_match_expected_version "datahub" $max_wait_pods_ready_time 60 $install_namespace
 wait_until_pods_ready $max_wait_pods_ready_time 60 $install_namespace 5
 wait_until_cr_ready $max_wait_pods_ready_time 60 $install_namespace
+
+if [ "$need_upgrade" = "y" ];then
+    # Drop fedemeter measurements during upgrade (4.2, 4.3, 4.3.1 upgrade to 4.4 or later)
+    if [ "0${target_tag_first_digit}" -ge "4" ] && [ "0${target_tag_middle_digit}" -ge "4" ] && [ "0${source_tag_first_digit}" -eq "4" ] && [ "0${source_tag_middle_digit}" -lt "4" ]; then
+        influxdb_name="alameda-influxdb-0"
+        database_name="alameda_fedemeter"
+        kubectl exec $influxdb_name -n $install_namespace -- influx -ssl -unsafeSsl -precision rfc3339 -username admin -password adminpass -database $database_name -execute "drop measurement calculation_price_instance;drop measurement calculation_price_storage;drop measurement recommendation_jeri;"
+    fi
+fi
 
 webhook_exist_checker
 if [ "$webhook_exist" != "y" ];then
