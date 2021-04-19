@@ -6,6 +6,7 @@ target_config_info='{
   "rest_api_full_path": "https://172.31.2.41:31011",
   "login_account": "",
   "login_password": "",
+  "access_token": "",
   "resource_type": "controller", # controller or namespace
   "iac_command": "script", # script or terraform
   "kubeconfig_path": "", # optional # kubeconfig file path
@@ -35,7 +36,7 @@ check_target_config()
     else
         echo "-------------- config info ----------------" >> $debug_log
         # Hide password
-        echo "$target_config_info" |sed 's/"login_password.*/"login_password": *****/g' >> $debug_log
+        echo "$target_config_info" |sed 's/"login_password.*/"login_password": *****/g'|sed 's/"access_token":.*/"access_token": *****/g' >> $debug_log
         echo "-----------------------------------------------------" >> $debug_log
     fi
 }
@@ -53,7 +54,7 @@ show_usage()
             --test-connection-only
             --dry-run-only
             --verbose
-            --log-name <log filename> [e.g., $(tput setaf 6)--log-name mycluster.log$(tput sgr 0)]
+            --log-name [<path>/]<log filename> [e.g., $(tput setaf 6)--log-name mycluster.log$(tput sgr 0)]
 __EOF__
 }
 
@@ -71,7 +72,9 @@ __EOF__
 
 log_prompt()
 {
-    echo -e "\n$(tput setaf 6)Please refer to the logfile $debug_log for details. $(tput sgr 0)"
+    if [ "$debug_log" != "/dev/null" ]; then
+        echo -e "\n$(tput setaf 6)Please refer to the logfile $debug_log for details. $(tput sgr 0)"
+    fi
 }
 
 check_user_token()
@@ -112,33 +115,46 @@ check_rest_api_url()
 rest_api_login()
 {
     show_info "$(tput setaf 6)Logging into REST API...$(tput sgr 0)"
-    login_account=$(parse_value_from_target_var "login_account")
-    if [ "$login_account" = "" ]; then
-        echo -e "\n$(tput setaf 1)Error! Failed to get login account from target_config_info.$(tput sgr 0)" | tee -a $debug_log 1>&2
-        log_prompt
-        exit 8
+    provided_token=$(parse_value_from_target_var "access_token")
+    if [ "$provided_token" = "" ]; then
+        login_account=$(parse_value_from_target_var "login_account")
+        if [ "$login_account" = "" ]; then
+            echo -e "\n$(tput setaf 1)Error! Failed to get login account from target_config_info.$(tput sgr 0)" | tee -a $debug_log 1>&2
+            log_prompt
+            exit 8
+        fi
+        login_password=$(parse_value_from_target_var "login_password")
+        if [ "$login_password" = "" ]; then
+            echo -e "\n$(tput setaf 1)Error! Failed to get login password from target_config_info.$(tput sgr 0)" | tee -a $debug_log 1>&2
+            log_prompt
+            exit 8
+        fi
+        auth_string="${login_account}:${login_password}"
+        auth_cipher=$(echo -n "$auth_string"|base64)
+        if [ "$auth_cipher" = "" ]; then
+            echo -e "\n$(tput setaf 1)Error! Failed to generate base64 output of login string.$(tput sgr 0)"  | tee -a $debug_log 1>&2
+            log_prompt
+            exit 8
+        fi
+        rest_output=$(curl -sS -k -X POST "$api_url/apis/v1/users/login" -H "accept: application/json" -H "authorization: Basic ${auth_cipher}")
+        if [ "$?" != "0" ]; then
+            echo -e "\n$(tput setaf 1)Error! Failed to connect to REST API service ($api_url/apis/v1/users/login).$(tput sgr 0)" | tee -a $debug_log 1>&2
+            echo "Please check REST API IP" | tee -a $debug_log 1>&2
+            log_prompt
+            exit 8
+        fi
+        access_token="$(echo $rest_output|tr -d '\n'|grep -o "\"accessToken\":[^\"]*\"[^\"]*\""|sed -E 's/".*".*"(.*)"/\1/')"
+    else
+        access_token="$provided_token"
+        # Examine http response code
+        token_test_http_response="$(curl -o /dev/null -sS -k -X GET "$api_url/apis/v1/resources/clusters" -w "%{http_code}" -H "accept: application/json" -H "Authorization: Bearer $access_token")"
+        if [ "$token_test_http_response" != "200" ]; then
+            echo -e "\n$(tput setaf 1)Error! The access_token from target_config_info can't access the REST API service.$(tput sgr 0)" | tee -a $debug_log 1>&2
+            log_prompt
+            exit 8
+        fi
     fi
-    login_password=$(parse_value_from_target_var "login_password")
-    if [ "$login_password" = "" ]; then
-        echo -e "\n$(tput setaf 1)Error! Failed to get login password from target_config_info.$(tput sgr 0)" | tee -a $debug_log 1>&2
-        log_prompt
-        exit 8
-    fi
-    auth_string="${login_account}:${login_password}"
-    auth_cipher=$(echo -n "$auth_string"|base64)
-    if [ "$auth_cipher" = "" ]; then
-        echo -e "\n$(tput setaf 1)Error! Failed to generate base64 output of login string.$(tput sgr 0)"  | tee -a $debug_log 1>&2
-        log_prompt
-        exit 8
-    fi
-    rest_output=$(curl -sS -k -X POST "$api_url/apis/v1/users/login" -H "accept: application/json" -H "authorization: Basic ${auth_cipher}")
-    if [ "$?" != "0" ]; then
-        echo -e "\n$(tput setaf 1)Error! Failed to connect to REST API service ($api_url/apis/v1/users/login).$(tput sgr 0)" | tee -a $debug_log 1>&2
-        echo "Please check REST API IP" | tee -a $debug_log 1>&2
-        log_prompt
-        exit 8
-    fi
-    access_token="$(echo $rest_output|tr -d '\n'|grep -o "\"accessToken\":[^\"]*\"[^\"]*\""|sed -E 's/".*".*"(.*)"/\1/')"
+
     check_user_token
 
     show_info "Done."
@@ -858,16 +874,28 @@ fi
 
 file_folder="$save_path/auto-provisioning"
 
-mkdir -p $file_folder
-if [ ! -d "$file_folder" ]; then
-    echo -e "\n$(tput setaf 1)Error! Failed to create folder to save Federator.ai planning-util files.$(tput sgr 0)"
-    exit 3
-fi
 
 if [ "$log_name" = "" ]; then
     log_name="output.log"
+    debug_log="${file_folder}/${log_name}"
+else
+    if [[ "$log_name" = /* ]]; then
+        # Absolute path
+        file_folder="$(dirname "$log_name")"
+        debug_log="$log_name"
+    else
+        # Relative path
+        file_folder="$(readlink -f "${file_folder}/$(dirname "$log_name")")"
+        debug_log="${file_folder}/$(basename "$log_name")"
+    fi
 fi
-debug_log="${file_folder}/${log_name}"
+
+mkdir -p $file_folder
+if [ ! -d "$file_folder" ]; then
+    echo -e "\n$(tput setaf 1)Error! Failed to create folder ($file_folder) to save Federator.ai planning-util files.$(tput sgr 0)"
+    exit 3
+fi
+
 current_location=`pwd`
 # mCore
 default_min_cpu="50"
@@ -877,7 +905,7 @@ echo "================================== New Round =============================
 echo "Receiving command: '$0 $@'" >> $debug_log
 echo "Receiving time: `date -u`" >> $debug_log
 
-which kubectl > /dev/null 2>&1
+type kubectl > /dev/null 2>&1
 if [ "$?" != "0" ];then
     echo -e "\n$(tput setaf 1)Error! \"kubectl\" command is needed for this tool.$(tput sgr 0)" | tee -a $debug_log 1>&2
     log_prompt
@@ -900,14 +928,14 @@ if [ "$?" != "0" ];then
     exit 3
 fi
 
-which curl > /dev/null 2>&1
+type curl > /dev/null 2>&1
 if [ "$?" != "0" ];then
     echo -e "\n$(tput setaf 1)Error! \"curl\" command is needed for this tool.$(tput sgr 0)" | tee -a $debug_log 1>&2
     log_prompt
     exit 3
 fi
 
-which base64 > /dev/null 2>&1
+type base64 > /dev/null 2>&1
 if [ "$?" != "0" ];then
     echo -e "\n$(tput setaf 1)Error! \"base64\" command is needed for this tool.$(tput sgr 0)" | tee -a $debug_log 1>&2
     log_prompt
