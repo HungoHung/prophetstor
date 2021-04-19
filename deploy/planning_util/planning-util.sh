@@ -220,7 +220,20 @@ get_info_from_config()
         target_namespace=$resource_name
     fi
 
+    iac_command=$(parse_value_from_target_var "iac_command")
+    iac_command="$(echo "$iac_command" | tr '[:upper:]' '[:lower:]')"
+    if [ "$iac_command" = "" ]; then
+        echo -e "\n$(tput setaf 1)Error! Failed to get iac_command from target_config_info.$(tput sgr 0)" | tee -a $debug_log 1>&2
+        log_prompt
+        exit 8
+    elif [ "$iac_command" != "script" ] && [ "$iac_command" != "terraform" ]; then
+        echo -e "\n$(tput setaf 1)Error! Only support iac_command equals 'script' or 'terraform'.$(tput sgr 0)" | tee -a $debug_log 1>&2
+        log_prompt
+        exit 8
+    fi
+
     readable_granularity=$(parse_value_from_target_var "time_interval")
+    readable_granularity="$(echo "$readable_granularity" | tr '[:upper:]' '[:lower:]')"
     if [ "$readable_granularity" = "" ]; then
         echo -e "\n$(tput setaf 1)Error! Failed to get time interval of the planning target from target_config_info.$(tput sgr 0)" | tee -a $debug_log 1>&2
         log_prompt
@@ -507,53 +520,123 @@ update_target_resources()
     apply_min_max_margin "limits_pod_cpu" "cpu_headroom_mode" "cpu_headroom" "min_cpu" "max_cpu"
     apply_min_max_margin "limits_pod_memory" "memory_headroom_mode" "memory_headroom" "min_memory" "max_memory"
 
-    # Make sure default cpu & memory value above existing one
-    check_default_value_satified
-
-    if [ "$resource_type" = "controller" ]; then
-        exec_cmd="$kube_cmd -n $target_namespace set resources $owner_reference_kind $resource_name --limits cpu=${limits_pod_cpu}m,memory=${limits_pod_memory} --requests cpu=${requests_pod_cpu}m,memory=${requests_pod_memory}"
-    else
-        quota_name="${target_namespace}.federator.ai"
-        exec_cmd="$kube_cmd -n $target_namespace create quota $quota_name --hard=limits.cpu=${limits_pod_cpu}m,limits.memory=${limits_pod_memory},requests.cpu=${requests_pod_cpu}m,requests.memory=${requests_pod_memory}"
-    fi
-
-    show_info "$(tput setaf 3)Issuing cmd:$(tput sgr 0)"
-    show_info "$(tput setaf 2)$exec_cmd$(tput sgr 0)"
-    if [ "$mode" = "dry_run" ]; then
-        execution_time="N/A, skip due to dry run is enabled."
-        show_info "$(tput setaf 3)Dry run is enabled, skip execution.$(tput sgr 0)"
-        show_info "Done. Dry run is done."
-        return
-    fi
-
-    execution_time="$(date -u)"
-    if [ "$resource_type" = "namespace" ]; then
-        # Clean other quotas
-        all_quotas=$(kubectl -n $target_namespace get quota -o name|cut -d '/' -f2)
-        for quota in $(echo "$all_quotas")
-        do
-            $kube_cmd -n $target_namespace patch quota $quota --type json --patch "[ { \"op\" : \"remove\" , \"path\" : \"/spec/hard/limits.cpu\"}]" >/dev/null 2>&1
-            $kube_cmd -n $target_namespace patch quota $quota --type json --patch "[ { \"op\" : \"remove\" , \"path\" : \"/spec/hard/limits.memory\"}]" >/dev/null 2>&1
-            $kube_cmd -n $target_namespace patch quota $quota --type json --patch "[ { \"op\" : \"remove\" , \"path\" : \"/spec/hard/requests.cpu\"}]" >/dev/null 2>&1
-            $kube_cmd -n $target_namespace patch quota $quota --type json --patch "[ { \"op\" : \"remove\" , \"path\" : \"/spec/hard/requests.memory\"}]" >/dev/null 2>&1
-        done
-        # Delete previous federator.ai quotas
-        $kube_cmd -n $target_namespace delete quota $quota_name > /dev/null 2>&1
-    fi
-
-    eval $exec_cmd 3>&1 1>&2 2>&3 1>>$debug_log | tee -a $debug_log
-    if [ "${PIPESTATUS[0]}" != "0" ]; then
+    if [ "$iac_command" = "script" ]; then
+        # Make sure default cpu & memory value above existing one
+        check_default_value_satified
         if [ "$resource_type" = "controller" ]; then
-            echo -e "\n$(tput setaf 1)Error! Failed to update resources for $owner_reference_kind $resource_name$(tput sgr 0)" | tee -a $debug_log 1>&2
+            exec_cmd="$kube_cmd -n $target_namespace set resources $owner_reference_kind $resource_name --limits cpu=${limits_pod_cpu}m,memory=${limits_pod_memory} --requests cpu=${requests_pod_cpu}m,memory=${requests_pod_memory}"
         else
-            echo -e "\n$(tput setaf 1)Error! Failed to update quota for namespace $target_namespace$(tput sgr 0)" | tee -a $debug_log 1>&2
+            quota_name="${target_namespace}.federator.ai"
+            exec_cmd="$kube_cmd -n $target_namespace create quota $quota_name --hard=limits.cpu=${limits_pod_cpu}m,limits.memory=${limits_pod_memory},requests.cpu=${requests_pod_cpu}m,requests.memory=${requests_pod_memory}"
         fi
-        log_prompt
-        exit 8
+
+        show_info "$(tput setaf 3)Issuing cmd:$(tput sgr 0)"
+        show_info "$(tput setaf 2)$exec_cmd$(tput sgr 0)"
+        if [ "$mode" = "dry_run" ]; then
+            execution_time="N/A, skip due to dry run is enabled."
+            show_info "$(tput setaf 3)Dry run is enabled, skip execution.$(tput sgr 0)"
+            show_info "Done. Dry run is done."
+            return
+        fi
+
+        execution_time="$(date -u)"
+        if [ "$resource_type" = "namespace" ]; then
+            # Clean other quotas
+            all_quotas=$(kubectl -n $target_namespace get quota -o name|cut -d '/' -f2)
+            for quota in $(echo "$all_quotas")
+            do
+                $kube_cmd -n $target_namespace patch quota $quota --type json --patch "[ { \"op\" : \"remove\" , \"path\" : \"/spec/hard/limits.cpu\"}]" >/dev/null 2>&1
+                $kube_cmd -n $target_namespace patch quota $quota --type json --patch "[ { \"op\" : \"remove\" , \"path\" : \"/spec/hard/limits.memory\"}]" >/dev/null 2>&1
+                $kube_cmd -n $target_namespace patch quota $quota --type json --patch "[ { \"op\" : \"remove\" , \"path\" : \"/spec/hard/requests.cpu\"}]" >/dev/null 2>&1
+                $kube_cmd -n $target_namespace patch quota $quota --type json --patch "[ { \"op\" : \"remove\" , \"path\" : \"/spec/hard/requests.memory\"}]" >/dev/null 2>&1
+            done
+            # Delete previous federator.ai quotas
+            $kube_cmd -n $target_namespace delete quota $quota_name > /dev/null 2>&1
+        fi
+
+        eval $exec_cmd 3>&1 1>&2 2>&3 1>>$debug_log | tee -a $debug_log
+        if [ "${PIPESTATUS[0]}" != "0" ]; then
+            if [ "$resource_type" = "controller" ]; then
+                echo -e "\n$(tput setaf 1)Error! Failed to update resources for $owner_reference_kind $resource_name$(tput sgr 0)" | tee -a $debug_log 1>&2
+            else
+                echo -e "\n$(tput setaf 1)Error! Failed to update quota for namespace $target_namespace$(tput sgr 0)" | tee -a $debug_log 1>&2
+            fi
+            log_prompt
+            exit 8
+        fi
+    else
+        # iac_command = terraform
+        # dry_run = normal
+
+        if [ "$resource_type" = "controller" ]; then
+            variable_tf_name="${file_folder}/federatorai_${resource_type}_${resource_name}_${target_namespace}_${cluster_name}.tf"
+            auto_tfvars_name="${file_folder}/federatorai_${resource_type}_${resource_name}_${target_namespace}_${cluster_name}.auto.tfvars"
+        else
+            variable_tf_name="${file_folder}/federatorai_${resource_type}_${resource_name}_${cluster_name}.tf"
+            auto_tfvars_name="${file_folder}/federatorai_${resource_type}_${resource_name}_${cluster_name}.auto.tfvars"
+        fi
+        create_variable_tf
+        create_auto_tfvars
+
+        # Print final json output
+        if [ "$resource_type" = "controller" ]; then
+            echo -e "{\n  \"info\": {\n     \"cluster_name\": \"$cluster_name\",\n     \"resource_type\": \"$resource_type\",\n     \"namespace\": \"$target_namespace\",\n     \"resource_name\": \"$resource_name\",\n     \"kind\": \"$owner_reference_kind\",\n     \"time_interval\": \"$readable_granularity\",\n     \"execute_cmd\": \"N/A\",\n     \"execution_time\": \"N/A\"\n  },\n  \"log_file\": \"$debug_log\",\n  \"before_execution\":  {\n     \"limits\": {\n       \"cpu\": \"$limit_cpu_before\",\n       \"memory\": \"$limit_memory_before\"\n     },\n     \"requests\": {\n       \"cpu\": \"$request_cpu_before\",\n       \"memory\": \"$request_memory_before\"\n     }\n  },\n  \"recommended_values\": {\n     \"tf_file\": \"$variable_tf_name\",\n     \"tfvars_file\": \"$auto_tfvars_name\",\n     \"limits\": {\n       \"cpu\": \"${limits_pod_cpu}m\",\n       \"memory\": \"$limits_pod_memory\"\n     },\n     \"requests\": {\n       \"cpu\": \"${requests_pod_cpu}m\",\n       \"memory\": \"$requests_pod_memory\"\n     }\n  }\n}"  | tee -a $debug_log
+        else
+            #resource_type = namespace
+            echo -e "{\n  \"info\": {\n     \"cluster_name\": \"$cluster_name\",\n     \"resource_type\": \"$resource_type\",\n     \"resource_name\": \"$target_namespace\",\n     \"time_interval\": \"$readable_granularity\",\n     \"execute_cmd\": \"N/A\",\n     \"execution_time\": \"N/A\"\n  },\n  \"log_file\": \"$debug_log\",\n  \"before_execution\":  {\n     \"limits\": {\n       \"cpu\": \"$limit_cpu_before\",\n       \"memory\": \"$limit_memory_before\"\n     },\n     \"requests\": {\n       \"cpu\": \"$request_cpu_before\",\n       \"memory\": \"$request_memory_before\"\n     }\n  },\n  \"recommended_values\": {\n     \"tf_file\": \"$variable_tf_name\",\n     \"tfvars_file\": \"$auto_tfvars_name\",\n     \"limits\": {\n       \"cpu\": \"${limits_pod_cpu}m\",\n       \"memory\": \"$limits_pod_memory\"\n     },\n     \"requests\": {\n       \"cpu\": \"${requests_pod_cpu}m\",\n       \"memory\": \"$requests_pod_memory\"\n     }\n  }\n}"  | tee -a $debug_log
+        fi
     fi
 
     show_info "Done"
 }
+
+create_variable_tf()
+{
+    # clean up file
+    > $variable_tf_name
+
+    all_metrics=( "requests_pod_cpu" "requests_pod_memory" "limits_pod_cpu" "limits_pod_memory" )
+    for metric in "${all_metrics[@]}"
+    do
+        name="$(echo $metric|sed 's/_pod//g')"
+        # request or limit
+        type="$(echo $name|cut -d '_' -f1)"
+        type="${type::-1}"
+        # cpu or memory
+        part="$(echo $name|cut -d '_' -f2)"
+        variable_name="recommended_${part}_${type}"
+        echo -e "variable \"$variable_name\"{\n  description = \"Recommended value of the $part ${type} for resource\"\n  type        = string\n}" >> $variable_tf_name
+    done
+    show_info "$(tput setaf 2)tf file $(tput sgr 0)$(tput setaf 3)($variable_tf_name)$(tput sgr 0) $(tput setaf 2)is generated.$(tput sgr 0)"
+}
+
+create_auto_tfvars()
+{
+    # clean up file
+    > $auto_tfvars_name
+
+    all_metrics=( "requests_pod_cpu" "requests_pod_memory" "limits_pod_cpu" "limits_pod_memory" )
+    for metric in "${all_metrics[@]}"
+    do
+        name="$(echo $metric|sed 's/_pod//g')"
+        # request or limit
+        type="$(echo $name|cut -d '_' -f1)"
+        type="${type::-1}"
+        # cpu or memory
+        part="$(echo $name|cut -d '_' -f2)"
+        variable_name="recommended_${part}_${type}"
+        if [ "$part" = "cpu" ]; then
+            variable_value="${!metric}m"
+        else
+            # memory
+            variable_value="${!metric}"
+        fi
+
+        echo -e "$variable_name = \"$variable_value\"" >> $auto_tfvars_name
+    done
+    show_info "$(tput setaf 2)tfvars file $(tput sgr 0)$(tput setaf 3)($auto_tfvars_name)$(tput sgr 0) $(tput setaf 2)is generated.$(tput sgr 0)"
+}
+
 
 parse_value_from_resource()
 {
@@ -958,6 +1041,7 @@ rest_api_check_cluster_name
 
 # Get resource type
 resource_type=$(parse_value_from_target_var "resource_type")
+resource_type="$(echo "$resource_type" | tr '[:upper:]' '[:lower:]')"
 
 if [ "$resource_type" = "controller" ];then
     get_info_from_config
@@ -979,9 +1063,11 @@ else
     update_target_resources "normal"
 fi
 
-if [ "$resource_type" = "controller" ];then
-    get_controller_resources_from_kubecmd "after"
-else
-    # resource_type = namespace
-    get_namespace_quota_from_kubecmd "after"
+if [ "$iac_command" = "script" ]; then
+    if [ "$resource_type" = "controller" ];then
+        get_controller_resources_from_kubecmd "after"
+    else
+        # resource_type = namespace
+        get_namespace_quota_from_kubecmd "after"
+    fi
 fi
