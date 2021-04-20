@@ -30,9 +30,9 @@ target_config_info='{
 check_target_config()
 {
     if [ -z "$target_config_info" ]; then
-        echo -e "\n$(tput setaf 1)Error! target config info is empty.$(tput sgr 0)" | tee -a $debug_log 1>&2
+        echo -e "\n$(tput setaf 1)target_config_info is empty.$(tput sgr 0)" | tee -a $debug_log 1>&2
         log_prompt
-        exit 3
+        exit 2
     else
         echo "-------------- config info ----------------" >> $debug_log
         # Hide password
@@ -80,10 +80,10 @@ log_prompt()
 check_user_token()
 {
     if [ "$access_token" = "null" ] || [ "$access_token" = "" ]; then
-        echo -e "\n$(tput setaf 1)Error! Failed to get login token from REST API.$(tput sgr 0)" | tee -a $debug_log 1>&2
+        echo -e "\n$(tput setaf 1)Failed to get login token from REST API.$(tput sgr 0)" | tee -a $debug_log 1>&2
         echo "Please check login account and login password." | tee -a $debug_log 1>&2
         log_prompt
-        exit 8
+        exit 2
     fi
 }
 
@@ -91,9 +91,9 @@ parse_value_from_target_var()
 {
     target_string="$1"
     if [ -z "$target_string" ]; then
-        echo -e "\n$(tput setaf 1)Error! parse_value_from_target_var() target_string parameter can't be empty.$(tput sgr 0)" | tee -a $debug_log 1>&2
+        echo -e "\n$( tput setaf 1 )parse_value_from_target_var() target_string parameter can't be empty.$(tput sgr 0)" | tee -a $debug_log 1>&2
         log_prompt
-        exit 3
+        exit 2
     fi
     echo "$target_config_info"|tr -d '\n'|grep -o "\"$target_string\":[^\"]*\"[^\"]*\""|sed -E 's/".*".*"(.*)"/\1/'
 }
@@ -104,9 +104,9 @@ check_rest_api_url()
     api_url=$(parse_value_from_target_var "rest_api_full_path")
 
     if [ "$api_url" = "" ]; then
-        echo -e "\n$(tput setaf 1)Error! Failed to get REST API URL from target_config_info.$(tput sgr 0)" | tee -a $debug_log 1>&2
+        echo -e "\n$(tput setaf 1)Failed to get REST API URL from target_config_info.$(tput sgr 0)" | tee -a $debug_log 1>&2
         log_prompt
-        exit 8
+        exit 2
     fi
     show_info "REST API URL = $api_url"
     show_info "Done."
@@ -119,29 +119,29 @@ rest_api_login()
     if [ "$provided_token" = "" ]; then
         login_account=$(parse_value_from_target_var "login_account")
         if [ "$login_account" = "" ]; then
-            echo -e "\n$(tput setaf 1)Error! Failed to get login account from target_config_info.$(tput sgr 0)" | tee -a $debug_log 1>&2
+            echo -e "\n$(tput setaf 1)Failed to get login account from target_config_info.$(tput sgr 0)" | tee -a $debug_log 1>&2
             log_prompt
-            exit 8
+            exit 2
         fi
         login_password=$(parse_value_from_target_var "login_password")
         if [ "$login_password" = "" ]; then
-            echo -e "\n$(tput setaf 1)Error! Failed to get login password from target_config_info.$(tput sgr 0)" | tee -a $debug_log 1>&2
+            echo -e "\n$(tput setaf 1)Failed to get login password from target_config_info.$(tput sgr 0)" | tee -a $debug_log 1>&2
             log_prompt
-            exit 8
+            exit 2
         fi
         auth_string="${login_account}:${login_password}"
         auth_cipher=$(echo -n "$auth_string"|base64)
         if [ "$auth_cipher" = "" ]; then
-            echo -e "\n$(tput setaf 1)Error! Failed to generate base64 output of login string.$(tput sgr 0)"  | tee -a $debug_log 1>&2
+            echo -e "\n$(tput setaf 1)Failed to generate base64 output of login string.$(tput sgr 0)"  | tee -a $debug_log 1>&2
             log_prompt
-            exit 8
+            exit 2
         fi
         rest_output=$(curl -sS -k -X POST "$api_url/apis/v1/users/login" -H "accept: application/json" -H "authorization: Basic ${auth_cipher}")
         if [ "$?" != "0" ]; then
-            echo -e "\n$(tput setaf 1)Error! Failed to connect to REST API service ($api_url/apis/v1/users/login).$(tput sgr 0)" | tee -a $debug_log 1>&2
+            echo -e "\n$(tput setaf 1)Failed to connect to REST API service ($api_url/apis/v1/users/login).$(tput sgr 0)" | tee -a $debug_log 1>&2
             echo "Please check REST API IP" | tee -a $debug_log 1>&2
             log_prompt
-            exit 8
+            exit 3
         fi
         access_token="$(echo $rest_output|tr -d '\n'|grep -o "\"accessToken\":[^\"]*\"[^\"]*\""|sed -E 's/".*".*"(.*)"/\1/')"
     else
@@ -149,9 +149,9 @@ rest_api_login()
         # Examine http response code
         token_test_http_response="$(curl -o /dev/null -sS -k -X GET "$api_url/apis/v1/resources/clusters" -w "%{http_code}" -H "accept: application/json" -H "Authorization: Bearer $access_token")"
         if [ "$token_test_http_response" != "200" ]; then
-            echo -e "\n$(tput setaf 1)Error! The access_token from target_config_info can't access the REST API service.$(tput sgr 0)" | tee -a $debug_log 1>&2
+            echo -e "\n$(tput setaf 1)The access_token from target_config_info can't access the REST API service.$(tput sgr 0)" | tee -a $debug_log 1>&2
             log_prompt
-            exit 8
+            exit 3
         fi
     fi
 
@@ -165,17 +165,17 @@ rest_api_check_cluster_name()
     show_info "$(tput setaf 6)Getting the cluster name of the planning target ...$(tput sgr 0)"
     cluster_name=$(parse_value_from_target_var "cluster_name")
     if [ "$cluster_name" = "" ]; then
-        echo -e "\n$(tput setaf 1)Error! Failed to get cluster name of the planning target from target_config_info.$(tput sgr 0)" | tee -a $debug_log 1>&2
+        echo -e "\n$(tput setaf 1)Failed to get cluster name of the planning target from target_config_info.$(tput sgr 0)" | tee -a $debug_log 1>&2
         log_prompt
-        exit 8
+        exit 2
     fi
 
     rest_cluster_output="$(curl -sS -k -X GET "$api_url/apis/v1/resources/clusters" -H "accept: application/json" -H "Authorization: Bearer $access_token" |tr -d '\n'|grep -o "\"data\":\[{[^}]*}"|grep -o "\"name\":[^\"]*\"[^\"]*\"")"
     echo "$rest_cluster_output"|grep -q "$cluster_name"
     if [ "$?" != "0" ]; then
-        echo -e "\n$(tput setaf 1)Error! The cluster name is not found in REST API return.$(tput sgr 0)" | tee -a $debug_log 1>&2
+        echo -e "\n$(tput setaf 1)The cluster name is not found in REST API return.$(tput sgr 0)" | tee -a $debug_log 1>&2
         log_prompt
-        exit 8
+        exit 3
     fi
 
     show_info "cluster_name = $cluster_name"
@@ -188,31 +188,31 @@ get_info_from_config()
 
     resource_name=$(parse_value_from_target_var "resource_name")
     if [ "$resource_name" = "" ]; then
-        echo -e "\n$(tput setaf 1)Error! Failed to get resource name of the planning target from target_config_info.$(tput sgr 0)" | tee -a $debug_log 1>&2
+        echo -e "\n$(tput setaf 1)Failed to get resource name of the planning target from target_config_info.$(tput sgr 0)" | tee -a $debug_log 1>&2
         log_prompt
-        exit 8
+        exit 2
     fi
 
     if [ "$resource_type" = "controller" ]; then
         owner_reference_kind=$(parse_value_from_target_var "kind")
         if [ "$owner_reference_kind" = "" ]; then
-            echo -e "\n$(tput setaf 1)Error! Failed to get controller kind of the planning target from target_config_info.$(tput sgr 0)" | tee -a $debug_log 1>&2
+            echo -e "\n$(tput setaf 1)Failed to get controller kind of the planning target from target_config_info.$(tput sgr 0)" | tee -a $debug_log 1>&2
             log_prompt
-            exit 8
+            exit 2
         fi
 
         owner_reference_kind="$(echo "$owner_reference_kind" | tr '[:upper:]' '[:lower:]')"
         if [ "$owner_reference_kind" = "statefulset" ] && [ "$owner_reference_kind" = "deployment" ] && [ "$owner_reference_kind" = "deploymentconfig" ]; then
-            echo -e "\n$(tput setaf 1)Error! Only support controller type equals Statefulset/Deployment/DeploymentConfig.$(tput sgr 0)" | tee -a $debug_log 1>&2
+            echo -e "\n$(tput setaf 1)Only support controller type equals Statefulset/Deployment/DeploymentConfig.$(tput sgr 0)" | tee -a $debug_log 1>&2
             log_prompt
-            exit 8
+            exit 2
         fi
 
         target_namespace=$(parse_value_from_target_var "namespace")
         if [ "$target_namespace" = "" ]; then
-            echo -e "\n$(tput setaf 1)Error! Failed to get namespace of the planning target from target_config_info.$(tput sgr 0)" | tee -a $debug_log 1>&2
+            echo -e "\n$(tput setaf 1)Failed to get namespace of the planning target from target_config_info.$(tput sgr 0)" | tee -a $debug_log 1>&2
             log_prompt
-            exit 8
+            exit 2
         fi
     else
         # resource_type = namespace
@@ -223,21 +223,21 @@ get_info_from_config()
     iac_command=$(parse_value_from_target_var "iac_command")
     iac_command="$(echo "$iac_command" | tr '[:upper:]' '[:lower:]')"
     if [ "$iac_command" = "" ]; then
-        echo -e "\n$(tput setaf 1)Error! Failed to get iac_command from target_config_info.$(tput sgr 0)" | tee -a $debug_log 1>&2
+        echo -e "\n$(tput setaf 1)Failed to get iac_command from target_config_info.$(tput sgr 0)" | tee -a $debug_log 1>&2
         log_prompt
-        exit 8
+        exit 2
     elif [ "$iac_command" != "script" ] && [ "$iac_command" != "terraform" ]; then
-        echo -e "\n$(tput setaf 1)Error! Only support iac_command equals 'script' or 'terraform'.$(tput sgr 0)" | tee -a $debug_log 1>&2
+        echo -e "\n$(tput setaf 1)Only support iac_command equals 'script' or 'terraform'.$(tput sgr 0)" | tee -a $debug_log 1>&2
         log_prompt
-        exit 8
+        exit 2
     fi
 
     readable_granularity=$(parse_value_from_target_var "time_interval")
     readable_granularity="$(echo "$readable_granularity" | tr '[:upper:]' '[:lower:]')"
     if [ "$readable_granularity" = "" ]; then
-        echo -e "\n$(tput setaf 1)Error! Failed to get time interval of the planning target from target_config_info.$(tput sgr 0)" | tee -a $debug_log 1>&2
+        echo -e "\n$(tput setaf 1)Failed to get time interval of the planning target from target_config_info.$(tput sgr 0)" | tee -a $debug_log 1>&2
         log_prompt
-        exit 8
+        exit 2
     fi
 
     min_cpu=$(parse_value_from_target_var "min_cpu")
@@ -285,9 +285,9 @@ get_info_from_config()
     elif [ "$readable_granularity" = "monthly" ]; then
         granularity="86400"
     else
-        echo -e "\n$(tput setaf 1)Error! Only support planning time interval equals daily/weekly/monthly.$(tput sgr 0)" | tee -a $debug_log 1>&2
+        echo -e "\n$(tput setaf 1)Only support planning time interval equals daily/weekly/monthly.$(tput sgr 0)" | tee -a $debug_log 1>&2
         log_prompt
-        exit 8
+        exit 2
     fi
 
     show_info "Cluster name = $cluster_name"
@@ -314,23 +314,23 @@ parse_value_from_planning()
     target_field="$1"
     target_resource="$2"
     if [ -z "$target_field" ]; then
-        echo -e "\n$(tput setaf 1)Error! parse_value_from_planning() target_field parameter can't be empty.$(tput sgr 0)" | tee -a $debug_log 1>&2
+        echo -e "\n$( tput setaf 1 )parse_value_from_planning() target_field parameter can't be empty.$(tput sgr 0)" | tee -a $debug_log 1>&2
         log_prompt
         exit 3
     elif [ -z "$target_resource" ]; then
-        echo -e "\n$(tput setaf 1)Error! parse_value_from_planning() target_resource parameter can't be empty.$(tput sgr 0)" | tee -a $debug_log 1>&2
+        echo -e "\n$( tput setaf 1 )parse_value_from_planning() target_resource parameter can't be empty.$(tput sgr 0)" | tee -a $debug_log 1>&2
         log_prompt
         exit 3
     fi
 
     if [ "$target_field" != "limitPlannings" ] && [ "$target_field" != "requestPlannings" ]; then
-        echo -e "\n$(tput setaf 1)Error! parse_value_from_planning() target_field can only be either 'limitPlannings' and 'requestPlannings'.$(tput sgr 0)" | tee -a $debug_log 1>&2
+        echo -e "\n$( tput setaf 1 )parse_value_from_planning() target_field can only be either 'limitPlannings' and 'requestPlannings'.$(tput sgr 0)" | tee -a $debug_log 1>&2
         log_prompt
         exit 3
     fi
 
     if [ "$target_resource" != "CPU_MILLICORES_USAGE" ] && [ "$target_resource" != "MEMORY_BYTES_USAGE" ]; then
-        echo -e "\n$(tput setaf 1)Error! parse_value_from_planning() target_field can only be either 'CPU_MILLICORES_USAGE' and 'MEMORY_BYTES_USAGE'.$(tput sgr 0)" | tee -a $debug_log 1>&2
+        echo -e "\n$( tput setaf 1 )parse_value_from_planning() target_field can only be either 'CPU_MILLICORES_USAGE' and 'MEMORY_BYTES_USAGE'.$(tput sgr 0)" | tee -a $debug_log 1>&2
         log_prompt
         exit 3
     fi
@@ -370,24 +370,24 @@ get_planning_from_api()
         exec_cmd="curl -sS -k -X GET \"$api_url/apis/v1/resources/clusters/$cluster_name/namespaces?names=$target_namespace\" -H \"accept: application/json\" -H \"Authorization: Bearer $access_token\""
         rest_output=$(eval $exec_cmd)
         if [ "$?" != "0" ]; then
-            echo -e "\n$(tput setaf 1)Error! Failed to get namespace $target_namespace resource info using REST API (Command: $exec_cmd)$(tput sgr 0)" | tee -a $debug_log 1>&2
+            echo -e "\n$(tput setaf 1)Failed to get namespace $target_namespace resource info using REST API (Command: $exec_cmd)$(tput sgr 0)" | tee -a $debug_log 1>&2
             log_prompt
-            exit 8
+            exit 3
         fi
         namespace_state="$(echo $rest_output|tr -d '\n'|grep -o "\"name\":.*\"${target_namespace}.*"|grep -o "\"state\":.*\".*\""|cut -d '"' -f4)"
         if [ "$namespace_state" != "monitoring" ]; then
-            echo -e "\n$(tput setaf 1)Error! Namespace $target_namespace state is not 'monitoring' (REST API output: $rest_output)$(tput sgr 0)" | tee -a $debug_log 1>&2
+            echo -e "\n$(tput setaf 1)Namespace $target_namespace state is not 'monitoring' (REST API output: $rest_output)$(tput sgr 0)" | tee -a $debug_log 1>&2
             log_prompt
-            exit 8
+            exit 1
         fi
         exec_cmd="curl -sS -k -X GET \"$api_url/apis/v1/plannings/clusters/$cluster_name/namespaces/$target_namespace?granularity=$granularity&type=$type&limit=1&order=asc&startTime=$interval_start_time&endTime=$interval_end_time\" -H \"accept: application/json\" -H \"Authorization: Bearer $access_token\""
     fi
 
     rest_output=$(eval $exec_cmd)
     if [ "$?" != "0" ]; then
-        echo -e "\n$(tput setaf 1)Error! Failed to get planning value of $resource_type using REST API (Command: $exec_cmd)$(tput sgr 0)" | tee -a $debug_log 1>&2
+        echo -e "\n$(tput setaf 1)Failed to get planning value of $resource_type using REST API (Command: $exec_cmd)$(tput sgr 0)" | tee -a $debug_log 1>&2
         log_prompt
-        exit 8
+        exit 3
     fi
     planning_all="$(echo $rest_output|tr -d '\n'|grep -o "\"plannings\":.*")"
     # check if return is '"plannings":[]}'
@@ -395,9 +395,9 @@ get_planning_from_api()
     if [ "$planning_all" = "" ] || [ "$planning_count" -le "15" ]; then
         echo -e "\n$(tput setaf 1)REST API output:$(tput sgr 0)" | tee -a $debug_log 1>&2
         echo -e "${rest_output}" | tee -a $debug_log 1>&2
-        echo -e "\n$(tput setaf 1)Error! Planning value is empty.$(tput sgr 0)" | tee -a $debug_log 1>&2
+        echo -e "\n$(tput setaf 1)Planning value is empty.$(tput sgr 0)" | tee -a $debug_log 1>&2
         log_prompt
-        exit 8
+        exit 1
     fi
 
     limits_pod_cpu=$(parse_value_from_planning "limitPlannings" "CPU_MILLICORES_USAGE")
@@ -409,21 +409,21 @@ get_planning_from_api()
         replica_number="$($kube_cmd get $owner_reference_kind $resource_name -n $target_namespace -o json|tr -d '\n'|grep -o "\"spec\":.*"|grep -o "\"replicas\":[^,]*[0-9]*"|head -1|cut -d ':' -f2|xargs)"
 
         if [ "$replica_number" = "" ]; then
-            echo -e "\n$(tput setaf 1)Error! Failed to get replica number from controller ($resource_name) in ns $target_namespace$(tput sgr 0)" | tee -a $debug_log 1>&2
+            echo -e "\n$(tput setaf 1)Failed to get replica number from controller ($resource_name) in ns $target_namespace$(tput sgr 0)" | tee -a $debug_log 1>&2
             log_prompt
-            exit 8
+            exit 4
         fi
 
         case $replica_number in
-            ''|*[!0-9]*) echo -e "\n$(tput setaf 1)Error! replica number needs to be an integer.$(tput sgr 0)" | tee -a $debug_log 1>&2 && exit 3 ;;
+            ''|*[!0-9]*) echo -e "\n$(tput setaf 1)Replica number needs to be an integer.$(tput sgr 0)" | tee -a $debug_log 1>&2 && exit 4 ;;
             *) ;;
         esac
 
         show_info "Controller replica number = $replica_number"
         if [ "$replica_number" = "0" ]; then
-            echo -e "\n$(tput setaf 1)Error! Replica number is zero.$(tput sgr 0)" | tee -a $debug_log 1>&2
+            echo -e "\n$(tput setaf 1)Replica number is zero.$(tput sgr 0)" | tee -a $debug_log 1>&2
             log_prompt
-            exit 8
+            exit 4
         fi
 
         # Round up the result (planning / replica)
@@ -442,13 +442,13 @@ get_planning_from_api()
 
     if [ "$limits_pod_cpu" = "" ] || [ "$requests_pod_cpu" = "" ] || [ "$limits_pod_memory" = "" ] || [ "$requests_pod_memory" = "" ]; then
         if [ "$resource_type" = "controller" ]; then
-            echo -e "\n$(tput setaf 1)Error! Failed to get controller ($resource_name) planning. Missing value.$(tput sgr 0)" | tee -a $debug_log 1>&2
+            echo -e "\n$(tput setaf 1)Failed to get controller ($resource_name) planning. Missing value.$(tput sgr 0)" | tee -a $debug_log 1>&2
         else
             # namespace
-            echo -e "\n$(tput setaf 1)Error! Failed to get namespace ($target_namespace) planning. Missing value.$(tput sgr 0)" | tee -a $debug_log 1>&2
+            echo -e "\n$(tput setaf 1)Failed to get namespace ($target_namespace) planning. Missing value.$(tput sgr 0)" | tee -a $debug_log 1>&2
         fi
         log_prompt
-        exit 8
+        exit 3
     fi
 
     show_info "Done."
@@ -504,7 +504,7 @@ update_target_resources()
 {
     mode=$1
     if [ "$mode" = "" ]; then
-        echo -e "\n$(tput setaf 1)Error! update_target_resources() mode parameter can't be empty.$(tput sgr 0)" | tee -a $debug_log 1>&2
+        echo -e "\n$( tput setaf 1 )update_target_resources() mode parameter can't be empty.$(tput sgr 0)" | tee -a $debug_log 1>&2
         log_prompt
         exit 3
     fi
@@ -512,9 +512,9 @@ update_target_resources()
     show_info "$(tput setaf 6)Updateing $resource_type resources...$(tput sgr 0)"
 
     if [ "$limits_pod_cpu" = "" ] || [ "$requests_pod_cpu" = "" ] || [ "$limits_pod_memory" = "" ] || [ "$requests_pod_memory" = "" ]; then
-        echo -e "\n$(tput setaf 1)Error! Missing planning values.$(tput sgr 0)" | tee -a $debug_log 1>&2
+        echo -e "\n$(tput setaf 1)Missing planning values.$(tput sgr 0)" | tee -a $debug_log 1>&2
         log_prompt
-        exit 8
+        exit 3
     fi
 
     apply_min_max_margin "requests_pod_cpu" "cpu_headroom_mode" "cpu_headroom" "min_cpu" "max_cpu"
@@ -522,9 +522,10 @@ update_target_resources()
     apply_min_max_margin "limits_pod_cpu" "cpu_headroom_mode" "cpu_headroom" "min_cpu" "max_cpu"
     apply_min_max_margin "limits_pod_memory" "memory_headroom_mode" "memory_headroom" "min_memory" "max_memory"
 
+    # Make sure default cpu & memory value above existing one
+    check_default_value_satified
+
     if [ "$iac_command" = "script" ]; then
-        # Make sure default cpu & memory value above existing one
-        check_default_value_satified
         if [ "$resource_type" = "controller" ]; then
             exec_cmd="$kube_cmd -n $target_namespace set resources $owner_reference_kind $resource_name --limits cpu=${limits_pod_cpu}m,memory=${limits_pod_memory} --requests cpu=${requests_pod_cpu}m,memory=${requests_pod_memory}"
         else
@@ -559,12 +560,12 @@ update_target_resources()
         eval $exec_cmd 3>&1 1>&2 2>&3 1>>$debug_log | tee -a $debug_log
         if [ "${PIPESTATUS[0]}" != "0" ]; then
             if [ "$resource_type" = "controller" ]; then
-                echo -e "\n$(tput setaf 1)Error! Failed to update resources for $owner_reference_kind $resource_name$(tput sgr 0)" | tee -a $debug_log 1>&2
+                echo -e "\n$(tput setaf 1)Failed to update resources for $owner_reference_kind $resource_name$(tput sgr 0)" | tee -a $debug_log 1>&2
             else
-                echo -e "\n$(tput setaf 1)Error! Failed to update quota for namespace $target_namespace$(tput sgr 0)" | tee -a $debug_log 1>&2
+                echo -e "\n$(tput setaf 1)Failed to update quota for namespace $target_namespace$(tput sgr 0)" | tee -a $debug_log 1>&2
             fi
             log_prompt
-            exit 8
+            exit 5
         fi
     else
         # iac_command = terraform
@@ -645,23 +646,23 @@ parse_value_from_resource()
     target_field="$1"
     target_resource="$2"
     if [ -z "$target_field" ]; then
-        echo -e "\n$(tput setaf 1)Error! parse_value_from_resource() target_field parameter can't be empty.$(tput sgr 0)" | tee -a $debug_log 1>&2
+        echo -e "\n$( tput setaf 1 )parse_value_from_resource() target_field parameter can't be empty.$(tput sgr 0)" | tee -a $debug_log 1>&2
         log_prompt
         exit 3
     elif [ -z "$target_resource" ]; then
-        echo -e "\n$(tput setaf 1)Error! parse_value_from_resource() target_resource parameter can't be empty.$(tput sgr 0)" | tee -a $debug_log 1>&2
+        echo -e "\n$( tput setaf 1 )parse_value_from_resource() target_resource parameter can't be empty.$(tput sgr 0)" | tee -a $debug_log 1>&2
         log_prompt
         exit 3
     fi
 
     if [ "$target_field" != "limits" ] && [ "$target_field" != "requests" ]; then
-        echo -e "\n$(tput setaf 1)Error! parse_value_from_resource() target_field can only be either 'limits' and 'requests'.$(tput sgr 0)" | tee -a $debug_log 1>&2
+        echo -e "\n$( tput setaf 1 )parse_value_from_resource() target_field can only be either 'limits' and 'requests'.$(tput sgr 0)" | tee -a $debug_log 1>&2
         log_prompt
         exit 3
     fi
 
     if [ "$target_resource" != "cpu" ] && [ "$target_resource" != "memory" ]; then
-        echo -e "\n$(tput setaf 1)Error! parse_value_from_resource() target_field can only be either 'cpu' and 'memory'.$(tput sgr 0)" | tee -a $debug_log 1>&2
+        echo -e "\n$( tput setaf 1 )parse_value_from_resource() target_field can only be either 'cpu' and 'memory'.$(tput sgr 0)" | tee -a $debug_log 1>&2
         log_prompt
         exit 3
     fi
@@ -674,23 +675,23 @@ parse_value_from_quota()
     target_field="$1"
     target_resource="$2"
     if [ -z "$target_field" ]; then
-        echo -e "\n$(tput setaf 1)Error! parse_value_from_quota() target_field parameter can't be empty.$(tput sgr 0)" | tee -a $debug_log 1>&2
+        echo -e "\n$( tput setaf 1 )parse_value_from_quota() target_field parameter can't be empty.$(tput sgr 0)" | tee -a $debug_log 1>&2
         log_prompt
         exit 3
     elif [ -z "$target_resource" ]; then
-        echo -e "\n$(tput setaf 1)Error! parse_value_from_quota() target_resource parameter can't be empty.$(tput sgr 0)" | tee -a $debug_log 1>&2
+        echo -e "\n$( tput setaf 1 )parse_value_from_quota() target_resource parameter can't be empty.$(tput sgr 0)" | tee -a $debug_log 1>&2
         log_prompt
         exit 3
     fi
 
     if [ "$target_field" != "limits" ] && [ "$target_field" != "requests" ]; then
-        echo -e "\n$(tput setaf 1)Error! parse_value_from_quota() target_field can only be either 'limits' and 'requests'.$(tput sgr 0)" | tee -a $debug_log 1>&2
+        echo -e "\n$( tput setaf 1 )parse_value_from_quota() target_field can only be either 'limits' and 'requests'.$(tput sgr 0)" | tee -a $debug_log 1>&2
         log_prompt
         exit 3
     fi
 
     if [ "$target_resource" != "cpu" ] && [ "$target_resource" != "memory" ]; then
-        echo -e "\n$(tput setaf 1)Error! parse_value_from_quota() target_field can only be either 'cpu' and 'memory'.$(tput sgr 0)" | tee -a $debug_log 1>&2
+        echo -e "\n$( tput setaf 1 )parse_value_from_quota() target_field can only be either 'cpu' and 'memory'.$(tput sgr 0)" | tee -a $debug_log 1>&2
         log_prompt
         exit 3
     fi
@@ -702,9 +703,9 @@ get_namespace_quota_from_kubecmd()
 {
     mode=$1
     if [ "$mode" = "" ]; then
-        echo -e "\n$(tput setaf 1)Error! get_namespace_quota_from_kubecmd() mode parameter can't be empty.$(tput sgr 0)" | tee -a $debug_log 1>&2
+        echo -e "\n$( tput setaf 1 )get_namespace_quota_from_kubecmd() mode parameter can't be empty.$(tput sgr 0)" | tee -a $debug_log 1>&2
         log_prompt
-        exit 3
+        exit 4
     fi
 
     show_info "$(tput setaf 6)Getting current namespace quota...$(tput sgr 0)"
@@ -838,9 +839,9 @@ get_controller_resources_from_kubecmd()
 {
     mode=$1
     if [ "$mode" = "" ]; then
-        echo -e "\n$(tput setaf 1)Error! get_controller_resources_from_kubecmd() mode parameter can't be empty.$(tput sgr 0)" | tee -a $debug_log 1>&2
+        echo -e "\n$( tput setaf 1 )get_controller_resources_from_kubecmd() mode parameter can't be empty.$(tput sgr 0)" | tee -a $debug_log 1>&2
         log_prompt
-        exit 3
+        exit 4
     fi
 
     show_info "$(tput setaf 6)Getting current controller resources...$(tput sgr 0)"
@@ -924,9 +925,9 @@ while getopts "h-:" o; do
                 log-name)
                     log_name="${!OPTIND}"; OPTIND=$(( $OPTIND + 1 ))
                     if [ "$log_name" = "" ]; then
-                        echo -e "\n$(tput setaf 1)Error! Missing --${OPTARG} value$(tput sgr 0)"
+                        echo -e "\n$(tput setaf 1)Missing --${OPTARG} value$(tput sgr 0)"
                         show_usage
-                        exit 4
+                        exit 6
                     fi
                     ;;
                 help)
@@ -934,9 +935,9 @@ while getopts "h-:" o; do
                     exit 0
                     ;;
                 *)
-                    echo -e "\n$(tput setaf 1)Error! Unknown option --${OPTARG}$(tput sgr 0)"
+                    echo -e "\n$(tput setaf 1)Unknown option --${OPTARG}$(tput sgr 0)"
                     show_usage
-                    exit 4
+                    exit 6
                     ;;
             esac;;
         h)
@@ -944,9 +945,9 @@ while getopts "h-:" o; do
             exit 0
             ;;
         *)
-            echo -e "\n$(tput setaf 1)Error! wrong parameter.$(tput sgr 0)"
+            echo -e "\n$(tput setaf 1)Wrong parameter.$(tput sgr 0)"
             show_usage
-            exit 5
+            exit 6
             ;;
     esac
 done
@@ -977,8 +978,8 @@ fi
 
 mkdir -p $file_folder
 if [ ! -d "$file_folder" ]; then
-    echo -e "\n$(tput setaf 1)Error! Failed to create folder ($file_folder) to save Federator.ai planning-util files.$(tput sgr 0)"
-    exit 3
+    echo -e "\n$(tput setaf 1)Failed to create folder ($file_folder) to save Federator.ai planning-util files.$(tput sgr 0)"
+    exit 6
 fi
 
 current_location=`pwd`
@@ -992,9 +993,9 @@ echo "Receiving time: `date -u`" >> $debug_log
 
 type kubectl > /dev/null 2>&1
 if [ "$?" != "0" ];then
-    echo -e "\n$(tput setaf 1)Error! \"kubectl\" command is needed for this tool.$(tput sgr 0)" | tee -a $debug_log 1>&2
+    echo -e "\n$(tput setaf 1)\"kubectl\" command is needed for this tool.$(tput sgr 0)" | tee -a $debug_log 1>&2
     log_prompt
-    exit 3
+    exit 6
 fi
 
 # Get kubeconfig path
@@ -1008,23 +1009,23 @@ fi
 
 $kube_cmd version|grep -q "^Server"
 if [ "$?" != "0" ];then
-    echo -e "\n$(tput setaf 1) Error! Failed to get Kubernetes server info through kubectl cmd. Please login first or check your kubeconfig_path config value.$(tput sgr 0)" | tee -a $debug_log 1>&2
+    echo -e "\n$(tput setaf 1) Failed to get Kubernetes server info through kubectl cmd. Please login first or check your kubeconfig_path config value.$(tput sgr 0)" | tee -a $debug_log 1>&2
     log_prompt
-    exit 3
+    exit 6
 fi
 
 type curl > /dev/null 2>&1
 if [ "$?" != "0" ];then
-    echo -e "\n$(tput setaf 1)Error! \"curl\" command is needed for this tool.$(tput sgr 0)" | tee -a $debug_log 1>&2
+    echo -e "\n$(tput setaf 1)\"curl\" command is needed for this tool.$(tput sgr 0)" | tee -a $debug_log 1>&2
     log_prompt
-    exit 3
+    exit 6
 fi
 
 type base64 > /dev/null 2>&1
 if [ "$?" != "0" ];then
-    echo -e "\n$(tput setaf 1)Error! \"base64\" command is needed for this tool.$(tput sgr 0)" | tee -a $debug_log 1>&2
+    echo -e "\n$(tput setaf 1)\"base64\" command is needed for this tool.$(tput sgr 0)" | tee -a $debug_log 1>&2
     log_prompt
-    exit 3
+    exit 6
 fi
 
 script_located_path=$(dirname $(readlink -f "$0"))
@@ -1054,9 +1055,9 @@ elif [ "$resource_type" = "namespace" ]; then
     get_namespace_quota_from_kubecmd "before"
     get_planning_from_api
 else
-    echo -e "\n$(tput setaf 1)Error! Only support 'mode' equals controller or namespace.$(tput sgr 0)" | tee -a $debug_log 1>&2
+    echo -e "\n$(tput setaf 1)Only support 'mode' equals controller or namespace.$(tput sgr 0)" | tee -a $debug_log 1>&2
     log_prompt
-    exit 8
+    exit 3
 fi
 
 if [ "$do_dry_run" = "y" ]; then
