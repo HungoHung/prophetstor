@@ -390,7 +390,9 @@ get_planning_from_api()
         exit 8
     fi
     planning_all="$(echo $rest_output|tr -d '\n'|grep -o "\"plannings\":.*")"
-    if [ "$planning_all" = "" ]; then
+    # check if return is '"plannings":[]}'
+    planning_count=${#planning_all}
+    if [ "$planning_all" = "" ] || [ "$planning_count" -le "15" ]; then
         echo -e "\n$(tput setaf 1)REST API output:$(tput sgr 0)" | tee -a $debug_log 1>&2
         echo -e "${rest_output}" | tee -a $debug_log 1>&2
         echo -e "\n$(tput setaf 1)Error! Planning value is empty.$(tput sgr 0)" | tee -a $debug_log 1>&2
