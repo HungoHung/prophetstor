@@ -55,6 +55,7 @@ show_usage()
             --dry-run-only
             --verbose
             --log-name [<path>/]<log filename> [e.g., $(tput setaf 6)--log-name mycluster.log$(tput sgr 0)]
+            --terraform-path <path> [e.g., $(tput setaf 6)--terraform-path /var/test/output$(tput sgr 0)]
 __EOF__
 }
 
@@ -572,11 +573,11 @@ update_target_resources()
         # dry_run = normal
 
         if [ "$resource_type" = "controller" ]; then
-            variable_tf_name="${file_folder}/federatorai_${resource_type}_${resource_name}_${target_namespace}_${cluster_name}.tf"
-            auto_tfvars_name="${file_folder}/federatorai_${resource_type}_${resource_name}_${target_namespace}_${cluster_name}.auto.tfvars"
+            variable_tf_name="${terraform_path}/federatorai_${resource_type}_${resource_name}_${target_namespace}_${cluster_name}.tf"
+            auto_tfvars_name="${terraform_path}/federatorai_${resource_type}_${resource_name}_${target_namespace}_${cluster_name}.auto.tfvars"
         else
-            variable_tf_name="${file_folder}/federatorai_${resource_type}_${resource_name}_${cluster_name}.tf"
-            auto_tfvars_name="${file_folder}/federatorai_${resource_type}_${resource_name}_${cluster_name}.auto.tfvars"
+            variable_tf_name="${terraform_path}/federatorai_${resource_type}_${resource_name}_${cluster_name}.tf"
+            auto_tfvars_name="${terraform_path}/federatorai_${resource_type}_${resource_name}_${cluster_name}.auto.tfvars"
         fi
         create_variable_tf
         create_auto_tfvars
@@ -930,6 +931,14 @@ while getopts "h-:" o; do
                         exit 6
                     fi
                     ;;
+                terraform-path)
+                    terraform_path="${!OPTIND}"; OPTIND=$(( $OPTIND + 1 ))
+                    if [ "$terraform_path" = "" ]; then
+                        echo -e "\n$(tput setaf 1)Missing --${OPTARG} value$(tput sgr 0)"
+                        show_usage
+                        exit 6
+                    fi
+                    ;;
                 help)
                     show_usage
                     exit 0
@@ -979,6 +988,16 @@ fi
 mkdir -p $file_folder
 if [ ! -d "$file_folder" ]; then
     echo -e "\n$(tput setaf 1)Failed to create folder ($file_folder) to save Federator.ai planning-util files.$(tput sgr 0)"
+    exit 6
+fi
+
+if [ "$terraform_path" = "" ]; then
+    script_located_path=$(dirname $(readlink -f "$0"))
+    terraform_path="$script_located_path"
+fi
+mkdir -p $terraform_path
+if [ ! -d "$terraform_path" ]; then
+    echo -e "\n$(tput setaf 1)Failed to create terraform folder ($terraform_path) to save Federator.ai planning-util files.$(tput sgr 0)"
     exit 6
 fi
 
