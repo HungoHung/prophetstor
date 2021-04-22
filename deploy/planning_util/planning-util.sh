@@ -1,4 +1,8 @@
 #!/usr/bin/env bash
+if [ "$BASH_VERSION" = "" ]; then
+    echo -e "\n$(tput setaf 1)Please use bash to run the script.$(tput sgr 0)" 1>&2
+    exit 6
+fi
 set -o pipefail
 
 #=========================== target config info start =========================
@@ -23,6 +27,7 @@ target_config_info='{
       "min_memory": "10000000", # optional # byte
       "max_memory": "18049217913", # optional # byte
       "memory_headroom": "27%" # optional # Absolute value (byte) e.g. 209715200 or Percentage e.g. 20%
+      "trigger_condition": "20" optional # Trigger condition (percentage) e.g. 20 means 20%
     }
 }'
 #=========================== target config info end ===========================
@@ -49,7 +54,7 @@ show_usage()
         $(tput setaf 2)Requirement:$(tput sgr 0)
             Modify "target_config_info" variable at the beginning of this script to specify target's info
         $(tput setaf 2)Run the script:$(tput sgr 0)
-            [tt@t ~]$$ bash planning-util.sh
+            bash planning-util.sh
         $(tput setaf 2)Standalone options:$(tput sgr 0)
             --test-connection-only
             --dry-run-only
@@ -247,6 +252,9 @@ get_info_from_config()
     min_memory=$(parse_value_from_target_var "min_memory")
     max_memory=$(parse_value_from_target_var "max_memory")
     memory_headroom=$(parse_value_from_target_var "memory_headroom")
+    trigger_condition=$(parse_value_from_target_var "trigger_condition")
+    limits_only=$(parse_value_from_target_var "limits_only")
+    requests_only=$(parse_value_from_target_var "requests_only")
 
     if [[ ! $min_cpu =~ ^[0-9]+$ ]]; then min_cpu=""; fi
     if [[ ! $max_cpu =~ ^[0-9]+$ ]]; then max_cpu=""; fi
@@ -277,6 +285,15 @@ get_info_from_config()
         # No valid value, set inactive value and mode
         memory_headroom="0"
         memory_headroom_mode="b"
+    fi
+    if [[ ! $trigger_condition =~ ^[0-9]+$ ]]; then trigger_condition=""; fi
+    [ "$trigger_condition" = "0" ] && trigger_condition=""
+
+    if [ "$limits_only" != 'y' ] && [ "$limits_only" != 'n' ]; then
+        limits_only="n"
+    fi
+    if [ "$requests_only" != 'y' ] && [ "$requests_only" != 'n' ]; then
+        requests_only="n"
     fi
 
     if [ "$readable_granularity" = "daily" ]; then
@@ -480,25 +497,102 @@ apply_min_max_margin()
         export $planning_name="${!max_name}"
     fi
 
-    show_info "-------------- Caculate min/max/headroom --------------"
+    show_info "-------------- Calculate min/max/headroom/default -------------"
     show_info "${mode_name} = ${!mode_name}"
     show_info "${headroom_name} = ${!headroom_name}"
     show_info "${min_name} = ${!min_name}"
     show_info "${max_name} = ${!max_name}"
     show_info "${planning_name} (before)= ${original_value}"
     show_info "${planning_name} (after)= ${!planning_name}"
-    show_info "-----------------------------------------------------"
+    show_info "---------------------------------------------------------------"
 
 }
 
-check_default_value_satified()
+check_default_value_satisfied()
 {
-    empty_mode="x"
-    empty_name="0"
-    apply_min_max_margin "requests_pod_cpu" "empty_mode" "empty_name" "default_min_cpu" "notexit"
-    apply_min_max_margin "requests_pod_memory" "empty_mode" "empty_name" "default_min_memory" "notexit"
-    apply_min_max_margin "limits_pod_cpu" "empty_mode" "empty_name" "default_min_cpu" "notexit"
-    apply_min_max_margin "limits_pod_memory" "empty_mode" "empty_name" "default_min_memory" "notexit"
+    void_mode="x"
+    void_value="0"
+    show_info "Verifying default value satisfied..."
+    apply_min_max_margin "requests_pod_cpu" "void_mode" "void_value" "default_min_cpu" "void"
+    apply_min_max_margin "requests_pod_memory" "void_mode" "void_value" "default_min_memory" "void"
+    apply_min_max_margin "limits_pod_cpu" "void_mode" "void_value" "default_min_cpu" "void"
+    apply_min_max_margin "limits_pod_memory" "void_mode" "void_value" "default_min_memory" "void"
+    show_info "Done"
+}
+
+compare_trigger_condition_with_difference()
+{
+    before=$1
+    after=$2
+    trigger_result=""
+    result=$(awk -v t1="${!before}" -v t2="${!after}" 'BEGIN{printf "%.0f", (t2-t1)/t1 * 100}')
+    # Get absolute value
+    result=$(echo ${result#-})
+    show_info "Comparing current value ($before=${!before}) and planning value ($after=${!after})..."
+    show_info "comp_result=${result}%, trigger_condition=${trigger_condition}%"
+    if [ "$trigger_condition" -le "$result" ]; then
+        trigger_result="y"
+        show_info "$(echo "$before"|rev |cut -d '_' -f2-|rev) meet the trigger condition."
+    else
+        trigger_result="n"
+        show_info "$(echo "$before"|rev |cut -d '_' -f2-|rev) will be skipped."
+    fi
+}
+
+check_trigger_condition_on_all_metrics()
+{
+    show_info "Verifying trigger condition..."
+    if [ "$trigger_condition" != "" ]; then
+        if [ "$limit_cpu_before" != "N/A" ]; then
+            compare_trigger_condition_with_difference "limit_cpu_before" "limits_pod_cpu"
+            do_limit_cpu="$trigger_result"
+        else
+            do_limit_cpu="y"
+        fi
+        if [ "$limit_memory_before" != "N/A" ]; then
+            compare_trigger_condition_with_difference "limit_memory_before" "limits_pod_memory"
+            do_limit_memory="$trigger_result"
+        else
+            do_limit_memory="y"
+        fi
+        if [ "$request_cpu_before" != "N/A" ]; then
+            compare_trigger_condition_with_difference "request_cpu_before" "requests_pod_cpu"
+            do_request_cpu="$trigger_result"
+        else
+            do_request_cpu="y"
+        fi
+        if [ "$request_memory_before" != "N/A" ]; then
+            compare_trigger_condition_with_difference "request_memory_before" "requests_pod_memory"
+            do_request_memory="$trigger_result"
+        else
+            do_request_memory="y"
+        fi
+    else
+        show_info "'trigger_condition' is disabled."
+        do_limit_cpu="y"
+        do_limit_memory="y"
+        do_request_cpu="y"
+        do_request_memory="y"
+    fi
+
+    if [ "$limits_only" = "y" ]; then
+        show_info "'Limits only' is enabled."
+        do_request_cpu="n"
+        do_request_memory="n"
+    fi
+
+    if [ "$requests_only" = "y" ]; then
+        show_info "'Requests only' is enabled."
+        do_limit_cpu="n"
+        do_limit_memory="n"
+    fi
+    show_info "----- Final results -----"
+    show_info "do_limit_cpu     : $do_limit_cpu"
+    show_info "do_limit_memory  : $do_limit_memory"
+    show_info "do_request_cpu   : $do_request_cpu"
+    show_info "do_request_memory: $do_request_memory"
+    show_info "-------------------------"
+    show_info "Done."
 }
 
 update_target_resources()
@@ -518,55 +612,127 @@ update_target_resources()
         exit 3
     fi
 
+    show_info "Calculating min/max/headroom ..."
     apply_min_max_margin "requests_pod_cpu" "cpu_headroom_mode" "cpu_headroom" "min_cpu" "max_cpu"
     apply_min_max_margin "requests_pod_memory" "memory_headroom_mode" "memory_headroom" "min_memory" "max_memory"
     apply_min_max_margin "limits_pod_cpu" "cpu_headroom_mode" "cpu_headroom" "min_cpu" "max_cpu"
     apply_min_max_margin "limits_pod_memory" "memory_headroom_mode" "memory_headroom" "min_memory" "max_memory"
 
     # Make sure default cpu & memory value above existing one
-    check_default_value_satified
+    check_default_value_satisfied
+
+    # Make sure trigger condition is met
+    check_trigger_condition_on_all_metrics
 
     if [ "$iac_command" = "script" ]; then
         if [ "$resource_type" = "controller" ]; then
-            exec_cmd="$kube_cmd -n $target_namespace set resources $owner_reference_kind $resource_name --limits cpu=${limits_pod_cpu}m,memory=${limits_pod_memory} --requests cpu=${requests_pod_cpu}m,memory=${requests_pod_memory}"
+            set_cmd=""
+            if [ "$do_limit_cpu" = "y" ]; then
+                if [ "$do_limit_memory" = "y" ]; then
+                    set_cmd="--limits cpu=${limits_pod_cpu}m,memory=${limits_pod_memory}"
+                else
+                    set_cmd="--limits cpu=${limits_pod_cpu}m"
+                fi
+            else
+                # do_limit_cpu = n
+                if [ "$do_limit_memory" = "y" ]; then
+                    set_cmd="--limits memory=${limits_pod_memory}"
+                fi
+            fi
+            if [ "$do_request_cpu" = "y" ]; then
+                if [ "$do_request_memory" = "y" ]; then
+                    set_cmd="$set_cmd --requests cpu=${requests_pod_cpu}m,memory=${requests_pod_memory}"
+                else
+                    set_cmd="$set_cmd --requests cpu=${requests_pod_cpu}m"
+                fi
+            else
+                # do_request_cpu = n
+                if [ "$do_request_memory" = "y" ]; then
+                    set_cmd="$set_cmd --requests memory=${requests_pod_memory}"
+                fi
+            fi
+
+            # For get_controller_resources_from_kubecmd 'after' mode
+            [ "$do_limit_cpu" = "n" ] && limits_pod_cpu="${limit_cpu_before::-1}"
+            [ "$do_limit_memory" = "n" ] && limits_pod_memory=$limit_memory_before
+            [ "$do_request_cpu" = "n" ] && requests_pod_cpu="${request_cpu_before::-1}"
+            [ "$do_request_memory" = "n" ] && requests_pod_memory=$request_memory_before
+
+            if [ "$set_cmd" = "" ]; then
+                exec_cmd="N/A, execution skipped due to trigger condition is not met."
+                execution_skipped="y"
+            else
+                exec_cmd="$kube_cmd -n $target_namespace set resources $owner_reference_kind $resource_name $set_cmd"
+            fi
         else
-            quota_name="${target_namespace}.federator.ai"
-            exec_cmd="$kube_cmd -n $target_namespace create quota $quota_name --hard=limits.cpu=${limits_pod_cpu}m,limits.memory=${limits_pod_memory},requests.cpu=${requests_pod_cpu}m,requests.memory=${requests_pod_memory}"
+            # namespace quota
+            execution_skipped="y"
+            if [ "$do_limit_cpu" = "n" ]; then
+                limits_pod_cpu="${limit_cpu_before::-1}"
+            else
+                execution_skipped="n"
+            fi
+            if [ "$do_limit_memory" = "n" ]; then
+                limits_pod_memory=$limit_memory_before
+            else
+                execution_skipped="n"
+            fi
+            if [ "$do_request_cpu" = "n" ]; then
+                requests_pod_cpu="${request_cpu_before::-1}"
+            else
+                execution_skipped="n"
+            fi
+            if [ "$do_request_memory" = "n" ]; then
+                requests_pod_memory=$request_memory_before
+            else
+                execution_skipped="n"
+            fi
+
+            if [ "$execution_skipped" = "y" ]; then
+                exec_cmd="N/A, execution skipped due to trigger condition is not met."
+            else
+                exec_cmd="$kube_cmd -n $target_namespace create quota $quota_name --hard=limits.cpu=${limits_pod_cpu}m,limits.memory=${limits_pod_memory},requests.cpu=${requests_pod_cpu}m,requests.memory=${requests_pod_memory}"
+            fi
         fi
 
         show_info "$(tput setaf 3)Issuing cmd:$(tput sgr 0)"
         show_info "$(tput setaf 2)$exec_cmd$(tput sgr 0)"
-        if [ "$mode" = "dry_run" ]; then
-            execution_time="N/A, skip due to dry run is enabled."
-            show_info "$(tput setaf 3)Dry run is enabled, skip execution.$(tput sgr 0)"
-            show_info "Done. Dry run is done."
-            return
-        fi
 
-        execution_time="$(date -u)"
-        if [ "$resource_type" = "namespace" ]; then
-            # Clean other quotas
-            all_quotas=$(kubectl -n $target_namespace get quota -o name|cut -d '/' -f2)
-            for quota in $(echo "$all_quotas")
-            do
-                $kube_cmd -n $target_namespace patch quota $quota --type json --patch "[ { \"op\" : \"remove\" , \"path\" : \"/spec/hard/limits.cpu\"}]" >/dev/null 2>&1
-                $kube_cmd -n $target_namespace patch quota $quota --type json --patch "[ { \"op\" : \"remove\" , \"path\" : \"/spec/hard/limits.memory\"}]" >/dev/null 2>&1
-                $kube_cmd -n $target_namespace patch quota $quota --type json --patch "[ { \"op\" : \"remove\" , \"path\" : \"/spec/hard/requests.cpu\"}]" >/dev/null 2>&1
-                $kube_cmd -n $target_namespace patch quota $quota --type json --patch "[ { \"op\" : \"remove\" , \"path\" : \"/spec/hard/requests.memory\"}]" >/dev/null 2>&1
-            done
-            # Delete previous federator.ai quotas
-            $kube_cmd -n $target_namespace delete quota $quota_name > /dev/null 2>&1
-        fi
-
-        eval $exec_cmd 3>&1 1>&2 2>&3 1>>$debug_log | tee -a $debug_log
-        if [ "${PIPESTATUS[0]}" != "0" ]; then
-            if [ "$resource_type" = "controller" ]; then
-                echo -e "\n$(tput setaf 1)Failed to update resources for $owner_reference_kind $resource_name$(tput sgr 0)" | tee -a $debug_log 1>&2
-            else
-                echo -e "\n$(tput setaf 1)Failed to update quota for namespace $target_namespace$(tput sgr 0)" | tee -a $debug_log 1>&2
+        if [ "$execution_skipped" = "y" ]; then
+            execution_time="N/A, execution skipped due to trigger condition is not met."
+        else
+            if [ "$mode" = "dry_run" ]; then
+                execution_time="N/A, execution skipped due to --dry-run-only is specified."
+                show_info "$(tput setaf 3)Dry run is enabled, skip execution.$(tput sgr 0)"
+                show_info "Done. Dry run is done."
+                return
             fi
-            log_prompt
-            exit 5
+
+            execution_time="$(date -u)"
+            if [ "$resource_type" = "namespace" ]; then
+                # Clean other quotas
+                all_quotas=$(kubectl -n $target_namespace get quota -o name|cut -d '/' -f2)
+                for quota in $(echo "$all_quotas")
+                do
+                    $kube_cmd -n $target_namespace patch quota $quota --type json --patch "[ { \"op\" : \"remove\" , \"path\" : \"/spec/hard/limits.cpu\"}]" >/dev/null 2>&1
+                    $kube_cmd -n $target_namespace patch quota $quota --type json --patch "[ { \"op\" : \"remove\" , \"path\" : \"/spec/hard/limits.memory\"}]" >/dev/null 2>&1
+                    $kube_cmd -n $target_namespace patch quota $quota --type json --patch "[ { \"op\" : \"remove\" , \"path\" : \"/spec/hard/requests.cpu\"}]" >/dev/null 2>&1
+                    $kube_cmd -n $target_namespace patch quota $quota --type json --patch "[ { \"op\" : \"remove\" , \"path\" : \"/spec/hard/requests.memory\"}]" >/dev/null 2>&1
+                done
+                # Delete previous federator.ai quota
+                $kube_cmd -n $target_namespace delete quota $quota_name > /dev/null 2>&1
+            fi
+
+            eval $exec_cmd 3>&1 1>&2 2>&3 1>>$debug_log | tee -a $debug_log
+            if [ "${PIPESTATUS[0]}" != "0" ]; then
+                if [ "$resource_type" = "controller" ]; then
+                    echo -e "\n$(tput setaf 1)Failed to update resources for $owner_reference_kind $resource_name$(tput sgr 0)" | tee -a $debug_log 1>&2
+                else
+                    echo -e "\n$(tput setaf 1)Failed to update quota for namespace $target_namespace$(tput sgr 0)" | tee -a $debug_log 1>&2
+                fi
+                log_prompt
+                exit 5
+            fi
         fi
     else
         # iac_command = terraform
@@ -697,7 +863,7 @@ parse_value_from_quota()
         exit 3
     fi
 
-    echo "$resources"|grep -o "\"$target_field.$target_resource\":[^\"]*\"[^\"]*\""|cut -d '"' -f4
+    echo "$quotas"|grep -o "\"$target_field.$target_resource\":[^\"]*\"[^\"]*\""|cut -d '"' -f4
 }
 
 get_namespace_quota_from_kubecmd()
@@ -709,64 +875,39 @@ get_namespace_quota_from_kubecmd()
         exit 4
     fi
 
+    quota_name="${target_namespace}.federator.ai"
+
     show_info "$(tput setaf 6)Getting current namespace quota...$(tput sgr 0)"
     show_info "Namespace = $target_namespace"
+    show_info "Quota name = $quota_name"
 
-    all_quotas=$(kubectl -n $target_namespace get quota -o name|cut -d '/' -f2)
-    limit_cpu_list=()
-    limit_memory_list=()
-    request_cpu_list=()
-    request_memory_list=()
-    for quota in $(echo "$all_quotas")
-    do
-        resources=$($kube_cmd get quota $quota -n $target_namespace -o json 2>/dev/null|tr -d '\n'|grep -o "\"spec\":.*"|grep -o "\"hard\":[^}]*}"|head -1)
-        limit_cpu=$(parse_value_from_quota "limits" "cpu")
-        [ "$limit_cpu" != "" ] && limit_cpu_list=("${limit_cpu_list[@]}" "$limit_cpu")
-        limit_memory=$(parse_value_from_quota "limits" "memory")
-        [ "$limit_memory" != "" ] && limit_memory_list=("${limit_memory_list[@]}" "$limit_memory")
-        request_cpu=$(parse_value_from_quota "requests" "cpu")
-        [ "$request_cpu" != "" ] && request_cpu_list=("${request_cpu_list[@]}" "$request_cpu")
-        request_memory=$(parse_value_from_quota "requests" "memory")
-        [ "$request_memory" != "" ] && request_memory_list=("${request_memory_list[@]}" "$request_memory")
-    done
+    quotas=$($kube_cmd get quota $quota_name -n $target_namespace -o json 2>/dev/null|tr -d '\n'|grep -o "\"spec\":.*"|grep -o "\"hard\":[^}]*}"|head -1)
+    limit_cpu=$(parse_value_from_quota "limits" "cpu")
+    limit_memory=$(parse_value_from_quota "limits" "memory")
+    request_cpu=$(parse_value_from_quota "requests" "cpu")
+    request_memory=$(parse_value_from_quota "requests" "memory")
 
     if [ "$mode" = "before" ]; then
-        for item in "${limit_cpu_list[@]}"
-        do
-            if [ "$limit_cpu_before" = "" ]; then
-                limit_cpu_before=$item
-            else
-                limit_cpu_before="${limit_cpu_before},$item"
-            fi
-        done
-        for item in "${limit_memory_list[@]}"
-        do
-            if [ "$limit_memory_before" = "" ]; then
-                limit_memory_before=$item
-            else
-                limit_memory_before="${limit_memory_before},$item"
-            fi
-        done
-        for item in "${request_cpu_list[@]}"
-        do
-            if [ "$request_cpu_before" = "" ]; then
-                request_cpu_before=$item
-            else
-                request_cpu_before="${request_cpu_before},$item"
-            fi
-        done
-        for item in "${request_memory_list[@]}"
-        do
-            if [ "$request_memory_before" = "" ]; then
-                request_memory_before=$item
-            else
-                request_memory_before="${request_memory_before},$item"
-            fi
-        done
-        [ "$limit_cpu_before" = "" ] && limit_cpu_before="N/A"
-        [ "$limit_memory_before" = "" ] && limit_memory_before="N/A"
-        [ "$request_cpu_before" = "" ] && request_cpu_before="N/A"
-        [ "$request_memory_before" = "" ] && request_memory_before="N/A"
+        if [ "$limit_cpu" = "" ]; then
+            limit_cpu_before="N/A"
+        else
+            limit_cpu_before=$limit_cpu
+        fi
+        if [ "$limit_memory" = "" ]; then
+            limit_memory_before="N/A"
+        else
+            limit_memory_before=$limit_memory
+        fi
+        if [ "$request_cpu" = "" ]; then
+            request_cpu_before="N/A"
+        else
+            request_cpu_before=$request_cpu
+        fi
+        if [ "$request_memory" = "" ]; then
+            request_memory_before="N/A"
+        else
+            request_memory_before=$request_memory
+        fi
         show_info "--------- Namespace Quota: Before execution ---------"
         show_info "$(tput setaf 3)limits:"
         show_info "  cpu: $limit_cpu_before"
@@ -786,42 +927,26 @@ get_namespace_quota_from_kubecmd()
             request_memory_after="$requests_pod_memory"
         else
             # patch is done
-            for item in "${limit_cpu_list[@]}"
-            do
-                if [ "$limit_cpu_after" = "" ]; then
-                    limit_cpu_after=$item
-                else
-                    limit_cpu_after="${limit_cpu_after},$item"
-                fi
-            done
-            for item in "${limit_memory_list[@]}"
-            do
-                if [ "$limit_memory_after" = "" ]; then
-                    limit_memory_after=$item
-                else
-                    limit_memory_after="${limit_memory_after},$item"
-                fi
-            done
-            for item in "${request_cpu_list[@]}"
-            do
-                if [ "$request_cpu_after" = "" ]; then
-                    request_cpu_after=$item
-                else
-                    request_cpu_after="${request_cpu_after},$item"
-                fi
-            done
-            for item in "${request_memory_list[@]}"
-            do
-                if [ "$request_memory_after" = "" ]; then
-                    request_memory_after=$item
-                else
-                    request_memory_after="${request_memory_after},$item"
-                fi
-            done
-            [ "$limit_cpu_after" = "" ] && limit_cpu_after="N/A"
-            [ "$limit_memory_after" = "" ] && limit_memory_after="N/A"
-            [ "$request_cpu_after" = "" ] && request_cpu_after="N/A"
-            [ "$request_memory_after" = "" ] && request_memory_after="N/A"
+            if [ "$limit_cpu" = "" ]; then
+                limit_cpu_after="N/A"
+            else
+                limit_cpu_after=$limit_cpu
+            fi
+            if [ "$limit_memory" = "" ]; then
+                limit_memory_after="N/A"
+            else
+                limit_memory_after=$limit_memory
+            fi
+            if [ "$request_cpu" = "" ]; then
+                request_cpu_after="N/A"
+            else
+                request_cpu_after=$request_cpu
+            fi
+            if [ "$request_memory" = "" ]; then
+                request_memory_after="N/A"
+            else
+                request_memory_after=$request_memory
+            fi
             show_info "--------- Namespace Quota: After execution ----------"
         fi
         show_info "$(tput setaf 3)limits:"
