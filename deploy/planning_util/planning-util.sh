@@ -526,9 +526,15 @@ compare_trigger_condition_with_difference()
     after=$2
     trigger_result=""
     result=$(awk -v t1="${!before}" -v t2="${!after}" 'BEGIN{printf "%.0f", (t2-t1)/t1 * 100}')
+    show_info "Comparing current value ($before=${!before}) and planning value ($after=${!after})..."
+    if [ "$result" -gt "0" ]; then
+        # planning > current, ignore checking
+        trigger_result="y"
+        show_info "planning value is bigger than current value, ignore trigger condition check."
+        return
+    fi
     # Get absolute value
     result=$(echo ${result#-})
-    show_info "Comparing current value ($before=${!before}) and planning value ($after=${!after})..."
     show_info "comp_result=${result}%, trigger_condition=${trigger_condition}%"
     if [ "$trigger_condition" -le "$result" ]; then
         trigger_result="y"
