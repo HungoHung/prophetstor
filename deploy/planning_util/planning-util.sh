@@ -28,7 +28,7 @@ target_config_info='{
 #=========================== target config info end ===========================
 
 if [ "$BASH_VERSION" = "" ]; then
-    echo -e "\n$(tput setaf 1)Please use bash to run the script.$(tput sgr 0)" 1>&2
+    /bin/echo -e "\n$(tput setaf 1)Please use bash to run the script.$(tput sgr 0)" 1>&2
     exit 6
 fi
 set -o pipefail
