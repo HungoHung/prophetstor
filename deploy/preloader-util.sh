@@ -1,32 +1,5 @@
 #!/usr/bin/env bash
 
-#################################################################################################################
-#
-#   This script is created for demo purpose.
-#   Usage:
-#       For K8S & VM:
-#           [-p] # Prepare environment
-#               Optional:
-#                   # Specify your local Kubernetes cluster name to install an NGINX for demo purpose.
-#                   [-a cluster_name]
-#           [-c] # clean environment for preloader test
-#           [-e] # Enable preloader pod
-#           [-r] # Run preloader (normal mode: historical + current)
-#           [-o] # Run preloader (historical + ab test)
-#           [-f future data point (hour)] # Run preloader future mode
-#           [-d] # Disable & Remove preloader
-#           [-v] # Revert environment to normal mode
-#           [-h] # Display script usage
-#   Standalone options:
-#       For K8S:
-#           [-i] # Install Nginx
-#           [-k] # Remove Nginx
-#           [-b] # Retrigger ab test inside preloader pod
-#           [-g ab_traffic_ratio] # ab test traffic ratio (default:4000) [e.g., -g 4000]
-#           [-t replica number] # Nginx default replica number (default:5) [e.g., -t 5]
-#
-#################################################################################################################
-
 show_usage()
 {
     cat << __EOF__
@@ -40,14 +13,18 @@ show_usage()
             [-c] # clean environment for preloader test
             [-e] # Enable preloader pod
             [-r] # Run preloader (normal mode: historical + current)
-            [-o] # Run preloader (historical + ab test)
+            [-o] # Run preloader (historical mode)
+                 # K8S: historical + ab test
+                 # VM: historical only
             [-f future data point (hour)] # Run preloader future mode
             [-d] # Disable & Remove preloader
             [-v] # Revert environment to normal mode
             [-h] # Display script usage
     Standalone options:
         For K8S:
-            [-i] # Install Nginx
+            [-i] # Install Nginx on local Kubernetes cluster
+                Requirement:
+                    [-a cluster_name] Specify local Kubernetes cluster name
             [-k] # Remove Nginx
             [-b] # Retrigger ab test inside preloader pod
             [-g ab_traffic_ratio] # ab test traffic ratio (default:4000) [e.g., -g 4000]
@@ -370,8 +347,7 @@ run_ab_test()
     fi
 
     # Modify parameters
-    nginx_ip=$(kubectl -n $nginx_ns get svc|grep "${nginx_name}"|awk '{print $3}')
-    [ "$nginx_ip" = "" ] && echo -e "$(tput setaf 1)Error! Can't get svc ip of namespace $nginx_ns$(tput sgr 0)" && return
+    nginx_ip="${nginx_name}.${nginx_ns}"
 
     sed -i "s/SVC_IP=.*/SVC_IP=${nginx_ip}/g" $preloader_folder/generate_loads.sh
     sed -i "s/SVC_PORT=.*/SVC_PORT=${nginx_port}/g" $preloader_folder/generate_loads.sh
@@ -780,7 +756,7 @@ _do_metrics_verify()
     metrics_num_found="0"
     for i in $(seq 0 $((metrics_required_number-1)))
     do
-        echo $metrics_list|grep -q "${metricsArray[$i]}"
+        echo "$metrics_list"|grep -q "^${metricsArray[$i]}$"
         if [ "$?" = "0" ]; then
             metrics_num_found=$((metrics_num_found+1))
         fi
@@ -1790,7 +1766,7 @@ fi
 if [ "$k8s_enabled" = "true" ]; then
     # K8S
     # copy preloader ab files if run historical only mode enabled
-    preloader_folder="$(dirname $0)/preloader_ab_runner"
+    preloader_folder="${script_located_path}/preloader_ab_runner"
     if [ "$run_preloader_with_historical_only" = "y" ] || [ "$run_ab_from_preloader" = "y" ]; then
         # Check folder exists
         [ ! -d "$preloader_folder" ] && echo -e "$(tput setaf 1)Error! Can't locate $preloader_folder folder.$(tput sgr 0)" && exit 3
@@ -1843,41 +1819,41 @@ if [ "$run_ab_from_preloader" = "y" ]; then
     fi
 fi
 
-# Move scale_down_pods into run_preloader_command method
-# scale_down_pods
-if [ "$run_preloader_with_normal_mode" = "y" ]; then
-    if [ "$demo_nginx_exist" = "true" ] && [ "$k8s_enabled" = "true" ]; then
-        add_alamedascaler_for_nginx
-    fi
-    run_preloader_command "normal"
-elif [ "$run_preloader_with_historical_only" = "y" ]; then
-    if [ "$demo_nginx_exist" = "true" ] && [ "$k8s_enabled" = "true" ]; then
-        get_cluster_name_from_alamedascaler
-        get_datasource_in_alamedaorganization
-
-        if [ "$data_source_type" = "datadog" ]; then
-            if [ "$enable_execution_specified" = "y" ]; then
-                enable_execution="$s_arg"
-            else
-                enable_execution="false"
-            fi
-        elif [ "$data_source_type" = "prometheus" ]; then
-            echo ""
-        elif [ "$data_source_type" = "sysdig" ]; then
-            # Not sure for now
-            if [ "$enable_execution_specified" = "y" ]; then
-                enable_execution="$s_arg"
-            else
-                enable_execution="false"
-            fi
+if [ "$run_preloader_with_normal_mode" = "y" ] || [ "$run_preloader_with_historical_only" = "y" ]; then
+    # Move scale_down_pods into run_preloader_command method
+    if [ "$run_preloader_with_normal_mode" = "y" ]; then
+        if [ "$demo_nginx_exist" = "true" ] && [ "$k8s_enabled" = "true" ]; then
+            add_alamedascaler_for_nginx
         fi
-        add_alamedascaler_for_nginx
-    fi
-    run_preloader_command "historical_only"
-fi
-verify_metrics_exist
-scale_up_pods
+        run_preloader_command "normal"
+    elif [ "$run_preloader_with_historical_only" = "y" ]; then
+        if [ "$demo_nginx_exist" = "true" ] && [ "$k8s_enabled" = "true" ]; then
+            get_cluster_name_from_alamedascaler
+            get_datasource_in_alamedaorganization
 
+            if [ "$data_source_type" = "datadog" ]; then
+                if [ "$enable_execution_specified" = "y" ]; then
+                    enable_execution="$s_arg"
+                else
+                    enable_execution="false"
+                fi
+            elif [ "$data_source_type" = "prometheus" ]; then
+                echo ""
+            elif [ "$data_source_type" = "sysdig" ]; then
+                # Not sure for now
+                if [ "$enable_execution_specified" = "y" ]; then
+                    enable_execution="$s_arg"
+                else
+                    enable_execution="false"
+                fi
+            fi
+            add_alamedascaler_for_nginx
+        fi
+        run_preloader_command "historical_only"
+    fi
+    verify_metrics_exist
+    scale_up_pods
+fi
 
 if [ "$future_mode_enabled" = "y" ]; then
     run_futuremode_preloader

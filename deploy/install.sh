@@ -334,7 +334,7 @@ get_grafana_route()
         if [ "$link" != "" ] ; then
         echo -e "\n========================================"
         echo "You can now access GUI through $(tput setaf 6)https://${link} $(tput sgr 0)"
-        echo "The default login credential is $(tput setaf 6)admin/admin$(tput sgr 0)"
+        echo "The default login credential is $(tput setaf 6)admin/${default_password}$(tput sgr 0)"
         echo -e "\nAlso, you can start to apply alamedascaler CR for the target you would like to monitor."
         echo "$(tput setaf 6)Review the administration guide for further details.$(tput sgr 0)"
         echo "========================================"
@@ -345,7 +345,7 @@ get_grafana_route()
         if [ "$expose_service" = "y" ]; then
             echo -e "\n========================================"
             echo "You can now access GUI through $(tput setaf 6)https://<YOUR IP>:$dashboard_frontend_node_port $(tput sgr 0)"
-            echo "The default login credential is $(tput setaf 6)admin/admin$(tput sgr 0)"
+            echo "The default login credential is $(tput setaf 6)admin/${default_password}$(tput sgr 0)"
             echo -e "\nAlso, you can start to apply alamedascaler CR for the target you would like to monitor."
             echo "$(tput setaf 6)Review the administration guide for further details.$(tput sgr 0)"
             echo "========================================"
@@ -360,7 +360,7 @@ get_restapi_route()
         if [ "$link" != "" ] ; then
         echo -e "\n========================================"
         echo "You can now access Federatorai REST API through $(tput setaf 6)https://${link} $(tput sgr 0)"
-        echo "The default login credential is $(tput setaf 6)admin/admin$(tput sgr 0)"
+        echo "The default login credential is $(tput setaf 6)admin/${default_password}$(tput sgr 0)"
         echo "The REST API online document can be found in $(tput setaf 6)https://${link}/apis/v1/swagger/index.html $(tput sgr 0)"
         echo "========================================"
         else
@@ -370,7 +370,7 @@ get_restapi_route()
         if [ "$expose_service" = "y" ]; then
             echo -e "\n========================================"
             echo "You can now access Federatorai REST API through $(tput setaf 6)https://<YOUR IP>:$rest_api_node_port $(tput sgr 0)"
-            echo "The default login credential is $(tput setaf 6)admin/admin$(tput sgr 0)"
+            echo "The default login credential is $(tput setaf 6)admin/${default_password}$(tput sgr 0)"
             echo "The REST API online document can be found in $(tput setaf 6)https://<YOUR IP>:$rest_api_node_port/apis/v1/swagger/index.html $(tput sgr 0)"
             echo "========================================"
         fi
@@ -1213,7 +1213,12 @@ cat >> 01*.yaml << __EOF__
     eks.amazonaws.com/role-arn: ${role_arn}
 __EOF__
 else
-    sed -i "s/:latest$/:${tag_number}/g" 03*.yaml
+    # Handle new aws operator url only case (ignore aws_mode enabled or not)
+    if [ "$ECR_URL" != "" ]; then
+        sed -i "s|quay.io/prophetstor/federatorai-operator-ubi:latest|$ECR_URL|g" 03*.yaml
+    else
+        sed -i "s/:latest$/:${tag_number}/g" 03*.yaml
+    fi
 fi
 
 # Specified alternative container image location
@@ -1371,6 +1376,17 @@ if [ "$ALAMEDASERVICE_FILE_PATH" = "" ]; then
                 echo "$(tput setaf 127)Which storage type you would like to use? ephemeral or persistent?"
                 read -r -p "[default: $default]: $(tput sgr 0)" storage_type </dev/tty
                 storage_type=${storage_type:-$default}
+                if [ "$storage_type" = "ephemeral" ]; then
+                    echo "$(tput setaf 3)Are you sure you want to use ephemeral storage?$(tput sgr 0)"
+                    echo "$(tput setaf 3)Any data on ephemeral storage will be LOST after Federator.ai pods are restarted!$(tput sgr 0)"
+                    read -r -p "$(tput setaf 3)Please enter any key to re-configure storage type, or type 'ephemeral' in UPPERCASE to confirm: $(tput sgr 0)" confirm_storage </dev/tty
+                    if [ "$confirm_storage" = "EPHEMERAL" ]; then
+                        break
+                    else
+                        storage_type=""
+                        continue
+                    fi
+                fi
             done
 
             if [[ "$storage_type" == "persistent" ]]; then
@@ -1455,6 +1471,15 @@ __EOF__
   - name: FEDERATORAI_MAXIMUM_LOG_SIZE
     value: "${log_allowance}"
 
+__EOF__
+        fi
+        if [ "$ECR_URL" != "" ]; then
+            # FEDERATORAI_INSTALLATION_SOURCE
+            # For REST API to generate aws specific password
+            cat >> ${alamedaservice_example} << __EOF__
+  env:
+  - name: FEDERATORAI_INSTALLATION_SOURCE
+    value: "aws marketplace"
 __EOF__
         fi
 
@@ -1748,6 +1773,9 @@ if [ "$need_upgrade" = "y" ];then
         influxdb_name="alameda-influxdb-0"
         database_name="alameda_fedemeter"
         kubectl exec $influxdb_name -n $install_namespace -- influx -ssl -unsafeSsl -precision rfc3339 -username admin -password adminpass -database $database_name -execute "drop measurement calculation_price_instance;drop measurement calculation_price_storage;drop measurement recommendation_jeri;"
+        if [ "$?" != "0" ]; then
+            echo -e "\n$(tput setaf 1)Warning! Failed to clean fedemeter measurements of previous version.$(tput sgr 0)"
+        fi
     fi
 fi
 
@@ -1758,6 +1786,35 @@ fi
 
 ###Configure data source from GUI
 #setup_data_adapter_secret
+
+if [ "$need_upgrade" != "y" ];then
+    if [ "$ECR_URL" != "" ]; then
+        echo "Retrieving default GUI login password..."
+        restapi_pod_name="$(kubectl get pods -n $install_namespace -o name |grep "federatorai-rest-"|cut -d '/' -f2)"
+        if [ "$restapi_pod_name" = "" ]; then
+            echo -e "\n$(tput setaf 1)Error! Failed to get Federator.ai REST API pod name!$(tput sgr 0)"
+            exit 2
+        fi
+        interval="30"
+        repeat_round="30"
+        while [ "$repeat_round" -gt "0" ]
+        do
+            repeat_round=$((repeat_round-1))
+            default_password="$(kubectl -n $install_namespace exec $restapi_pod_name -- cat /tmp/default_password 2>/dev/null)"
+            if [ "$default_password" != "" ]; then
+                break
+            fi
+            echo "..."
+            sleep $interval
+        done
+        if [ "$default_password" = "" ]; then
+            echo -e "\n$(tput setaf 1)Error! Failed to get default password for GUI and REST API!$(tput sgr 0)"
+            exit 2
+        fi
+    fi
+fi
+default_password=${default_password:-admin}
+
 get_grafana_route $install_namespace
 get_restapi_route $install_namespace
 echo -e "$(tput setaf 6)\nInstall Federator.ai $tag_number successfully$(tput sgr 0)"
