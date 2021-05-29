@@ -1164,6 +1164,7 @@ spec:
         hpaParameters:
           maxReplicas: 40
           minReplicas: 1
+    correlationAnalysis: disable
 __EOF__
     kubectl apply -f ${nginx_alamedascaler_file}
     if [ "$?" != "0" ]; then
