@@ -25,6 +25,7 @@ show_usage()
             [-i] # Install Nginx on local Kubernetes cluster
                 Requirement:
                     [-a cluster_name] Specify local Kubernetes cluster name
+                    [-u username:password] Server user and password (e.g. -u admin:password)
             [-k] # Remove Nginx
             [-b] # Retrigger ab test inside preloader pod
             [-g ab_traffic_ratio] # ab test traffic ratio (default:4000) [e.g., -g 4000]
@@ -396,7 +397,13 @@ run_preloader_command()
         kubectl exec -n $install_namespace $current_preloader_pod_name -- /opt/alameda/federatorai-agent/bin/transmitter loadhistoryonly --state=true
     fi
 
-    kubectl exec -n $install_namespace $current_preloader_pod_name -- /opt/alameda/federatorai-agent/bin/transmitter enable
+    if [ "$disable_all_node_metrics" = "y" ]; then
+        echo -e "$(tput setaf 6)Disable load on empty node.$(tput sgr 0)"
+        kubectl exec -n $install_namespace $current_preloader_pod_name -- /opt/alameda/federatorai-agent/bin/transmitter enable --state=true --DisableLoadAllNodeMetrics=true
+    else
+        kubectl exec -n $install_namespace $current_preloader_pod_name -- /opt/alameda/federatorai-agent/bin/transmitter enable
+    fi
+
     if [ "$?" != "0" ]; then
         echo -e "\n$(tput setaf 1)Error in executing preloader enable command.$(tput sgr 0)"
         leave_prog
@@ -1173,6 +1180,40 @@ __EOF__
     fi
     sleep 10
 
+    # Change namespace to 'monitoring' instead of default 'collecting' state
+    # rest api to update namespace state
+    # method:  PUT
+    # rest url: http://127.0.0.1:5055/apis/v1/configs/updatenamespacestate
+    # request body: {"data": { "cluster_name": "my-k8s-1", "name": "kube-system", "state": "monitoring"}}
+    json_data="{\"data\": { \"cluster_name\": \"${cluster_name}\", \"name\": \"${nginx_ns}\", \"state\": \"monitoring\"}}"
+    # Retry maximum 20*15s=300s because data-adapter took time to add namespace into alameda_cluster_status.namespace measurement
+    for i in `seq 1 20`; do
+        rest_pod_name="`kubectl get pods -n ${install_namespace} | grep "federatorai-rest-" | awk '{print $1}' | head -1`"
+        (kubectl -n ${install_namespace} exec -it ${rest_pod_name} -- \
+            curl -s -v -X PUT -H "Content-Type: application/json" \
+                -u "${auth_username}:${auth_password}" \
+                -d "${json_data}" \
+                http://127.0.0.1:5055/apis/v1/configs/updatenamespacestate \
+                2>&1) > /tmp/.preloader-running.$$
+        cat /tmp/.preloader-running.$$ >> $debug_log
+        # Wait until exists in alameda_cluster_status.namespace
+        grep "Namespace .*. in cluster .*. is not found" /tmp/.preloader-running.$$ > /dev/null
+        if [ "$?" = "0" ]; then
+            echo "Waiting for namespace ${nginx_ns} become ready in database"
+            sleep 15
+            continue
+        fi
+        #
+        grep 'HTTP/1.1 200 OK' /tmp/.preloader-running.$$ > /dev/null
+        if [ "$?" = "0" ]; then
+            break
+        fi
+        cat /tmp/.preloader-running.$$
+        echo "Error in setting 'monitoring' state." >> $debug_log
+        echo "Error in setting 'monitoring' state."
+        sleep 5
+    done
+    rm -f /tmp/.preloader-running.$$
     echo "Done"
     end=`date +%s`
     duration=$((end-start))
@@ -1502,7 +1543,7 @@ if [ "$#" -eq "0" ]; then
     exit
 fi
 
-while getopts "f:n:t:s:x:g:cdehikprvoba:" o; do
+while getopts "f:n:t:s:x:g:cjdehikprvoba:u:" o; do
     case "${o}" in
         p)
             prepare_environment="y"
@@ -1512,6 +1553,9 @@ while getopts "f:n:t:s:x:g:cdehikprvoba:" o; do
             ;;
         k)
             remove_nginx="y"
+            ;;
+        j)
+            disable_all_node_metrics="y"
             ;;
         c)
             clean_environment="y"
@@ -1562,6 +1606,10 @@ while getopts "f:n:t:s:x:g:cdehikprvoba:" o; do
         v)
             revert_environment="y"
             ;;
+        u)
+            auth_user_pass_specified="y"
+            u_arg="${OPTARG}"
+            ;;
         h)
             show_usage
             exit
@@ -1572,10 +1620,17 @@ while getopts "f:n:t:s:x:g:cdehikprvoba:" o; do
     esac
 done
 
+# We need 'curl' command
+if [ "`curl --version 2> /dev/null`" = "" ]; then
+    echo -e "\nThe 'curl' command is missing. Please install 'curl' command."
+    exit 1
+fi
+
+#
 kubectl version|grep -q "^Server"
 if [ "$?" != "0" ];then
     echo -e "\nPlease login to Kubernetes first."
-    exit
+    exit 1
 fi
 
 install_namespace="`kubectl get pods --all-namespaces |grep "alameda-datahub-"|awk '{print $1}'|head -1`"
@@ -1606,6 +1661,11 @@ if [ "$k8s_enabled" = "true" ]; then
     fi
 fi
 
+if [ "${auth_user_pass_specified}" = "y" ]; then
+    auth_username="`echo \"${u_arg}\" | xargs | tr ':' ' ' | awk '{print $1}'`"
+    len="`echo \"${auth_username}:\" | wc -m`"
+    auth_password="`echo \"${u_arg}\" | xargs | cut -c${len}-`"
+fi
 
 if [ "$cluster_name_specified" = "y" ]; then
     cluster_name="$a_arg"
