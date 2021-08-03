@@ -1589,6 +1589,18 @@ __EOF__
       class: ${storage_class}
       accessModes:
         - ReadWriteOnce
+  federatoraiPostgreSQL:
+    resources:
+      requests:
+        cpu: 500m
+        memory: 500Mi
+    storages:
+    - usage: data
+      type: pvc
+      size: 10Gi
+      class: ${storage_class}
+      accessModes:
+        - ReadWriteOnce
 __EOF__
         elif [ "${ENABLE_RESOURCE_REQUIREMENT}" = "y" ] && [ "$storage_type" = "ephemeral" ]; then
             cat >> ${alamedaservice_example} << __EOF__
@@ -1613,6 +1625,11 @@ __EOF__
       requests:
         cpu: 500m
         memory: 500Mi
+  federatoraiPostgreSQL:
+    resources:
+      requests:
+        cpu: 500m
+        memory: 500Mi
 __EOF__
         elif [ "${ENABLE_RESOURCE_REQUIREMENT}" != "y" ] && [ "$storage_type" = "persistent" ]; then
             cat >> ${alamedaservice_example} << __EOF__
@@ -1633,6 +1650,14 @@ __EOF__
       accessModes:
         - ReadWriteOnce
   fedemeterInfluxdb:
+    storages:
+    - usage: data
+      type: pvc
+      size: 10Gi
+      class: ${storage_class}
+      accessModes:
+        - ReadWriteOnce
+  federatoraiPostgreSQL:
     storages:
     - usage: data
       type: pvc

@@ -396,7 +396,12 @@ run_preloader_command()
         kubectl exec -n $install_namespace $current_preloader_pod_name -- /opt/alameda/federatorai-agent/bin/transmitter loadhistoryonly --state=true
     fi
 
-    kubectl exec -n $install_namespace $current_preloader_pod_name -- /opt/alameda/federatorai-agent/bin/transmitter enable
+    if [ "$disable_all_node_metrics" = "y" ]; then
+        echo -e "$(tput setaf 6)Disable load on empty node.$(tput sgr 0)"
+        kubectl exec -n $install_namespace $current_preloader_pod_name -- /opt/alameda/federatorai-agent/bin/transmitter enable --state=true --DisableLoadAllNodeMetrics=true
+    else
+        kubectl exec -n $install_namespace $current_preloader_pod_name -- /opt/alameda/federatorai-agent/bin/transmitter enable
+    fi
     if [ "$?" != "0" ]; then
         echo -e "\n$(tput setaf 1)Error in executing preloader enable command.$(tput sgr 0)"
         leave_prog
@@ -642,7 +647,7 @@ check_federatorai_cluster_type()
 {
     echo -e "\n$(tput setaf 6)Checking Federator.ai cluster type...$(tput sgr 0)"
     influxdb_pod_name="$(kubectl get pods -n $install_namespace |grep "alameda-influxdb-"|awk '{print $1}'|head -1)"
-    cluster_output="$(kubectl exec $influxdb_pod_name -n $install_namespace -- influx -ssl -unsafeSsl -precision rfc3339 -username admin -password adminpass -database alameda_cluster_status -format 'csv' -execute "select * from cluster"|tail -n +2|awk -F',' '{print $7}')"
+    cluster_output="$(kubectl exec $influxdb_pod_name -n $install_namespace -- influx -ssl -unsafeSsl -precision rfc3339 -username admin -password adminpass -database alameda_cluster_status -format 'csv' -execute "select * from cluster"|tail -n +2|awk -F',' '{print $9}')"
 
     if [ "$(echo "$cluster_output"|grep "vm"|head -1)" != "" ]; then
         vm_enabled="true"
@@ -1164,6 +1169,7 @@ spec:
         hpaParameters:
           maxReplicas: 40
           minReplicas: 1
+    correlationAnalysis: disable
 __EOF__
     kubectl apply -f ${nginx_alamedascaler_file}
     if [ "$?" != "0" ]; then
@@ -1249,6 +1255,41 @@ cleanup_influxdb_preloader_related_contents()
     end=`date +%s`
     duration=$((end-start))
     echo "Duration cleanup_influxdb_preloader_related_contents = $duration" >> $debug_log
+    cleanup_influxdb_3er_metrics
+}
+
+cleanup_influxdb_3er_metrics(){
+    start=`date +%s`
+    echo -e "\n$(tput setaf 6)Cleaning old influxdb 3er preloader metrics records ...$(tput sgr 0)"
+    influxdb_pod_name="`kubectl get pods -n $install_namespace |grep "alameda-influxdb-"|awk '{print $1}'|head -1`"
+
+    target_databases=( metric_instance_workload_le3599 metric_instance_workload_le21599 metric_instance_workload_le86399
+    metric_instance_workload_ge86400 metric_instance_prediction_le3599 metric_instance_prediction_le21599
+    metric_instance_prediction_le86399 metric_instance_prediction_ge86400 metric_instance_recommendation_le3599
+    metric_instance_recommendation_le21599 metric_instance_recommendation_le86399 metric_instance_recommendation_ge86400
+    metric_instance_planning_le3599 metric_instance_planning_le21599 metric_instance_planning_le86399
+    metric_instance_planning_ge86400)
+    for db in "${target_databases[@]}"
+    do
+        measurement_list="`kubectl exec $influxdb_pod_name -n $install_namespace -- influx -ssl -unsafeSsl -precision rfc3339 -username admin -password adminpass -database $db -execute "show measurements" 2>&1 |tail -n+4`"
+        echo "database=$db"
+        # prepare sql command
+        m_list=""
+        for measurement in `echo $measurement_list`
+        do
+            m_list="${m_list} ${measurement}"
+            sql_cmd="${sql_cmd}drop measurement $measurement;"
+        done
+        if [ "${m_list}" != "" ]; then
+            echo "cleaning up measurements: ${m_list}"
+            kubectl exec $influxdb_pod_name -n $install_namespace -- influx -ssl -unsafeSsl -precision rfc3339 -username admin -password adminpass -database $db -execute "${sql_cmd}" | grep -v "^$"
+        fi
+    done
+
+    echo "Done."
+    end=`date +%s`
+    duration=$((end-start))
+    echo "Duration cleanup_influxdb_3er_metrics = $duration" >> $debug_log
 }
 
 check_prediction_status()
@@ -1502,7 +1543,7 @@ if [ "$#" -eq "0" ]; then
     exit
 fi
 
-while getopts "f:n:t:s:x:g:cdehikprvoba:" o; do
+while getopts "f:n:t:s:x:g:cjdehikprvoba:" o; do
     case "${o}" in
         p)
             prepare_environment="y"
@@ -1512,6 +1553,9 @@ while getopts "f:n:t:s:x:g:cdehikprvoba:" o; do
             ;;
         k)
             remove_nginx="y"
+            ;;
+        j)
+            disable_all_node_metrics="y"
             ;;
         c)
             clean_environment="y"
