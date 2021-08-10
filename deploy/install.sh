@@ -43,9 +43,8 @@ pods_ready()
   [[ "$#" == 0 ]] && return 0
 
   namespace="$1"
-
   kubectl get pod -n $namespace \
-    -o=jsonpath='{range .items[*]}{.metadata.name}{"\t"}{.status.conditions[?(@.type=="Ready")].status}{"\t"}{.status.phase}{"\t"}{.status.reason}{"\n"}{end}' \
+    '-o=go-template={{range .items}}{{.metadata.name}}{{"\t"}}{{range .status.conditions}}{{if eq .type "Ready"}}{{.status}}{{"\t"}}{{end}}{{end}}{{.status.phase}}{{"\t"}}{{if .status.reason}}{{.status.reason}}{{end}}{{"\n"}}{{end}}' \
       | while read name status phase reason _junk; do
           if [ "$status" != "True" ]; then
             msg="Waiting for pod $name in namespace $namespace to be ready."
@@ -1589,6 +1588,18 @@ __EOF__
       class: ${storage_class}
       accessModes:
         - ReadWriteOnce
+  federatoraiPostgreSQL:
+    resources:
+      requests:
+        cpu: 500m
+        memory: 500Mi
+    storages:
+    - usage: data
+      type: pvc
+      size: 10Gi
+      class: ${storage_class}
+      accessModes:
+        - ReadWriteOnce
 __EOF__
         elif [ "${ENABLE_RESOURCE_REQUIREMENT}" = "y" ] && [ "$storage_type" = "ephemeral" ]; then
             cat >> ${alamedaservice_example} << __EOF__
@@ -1613,6 +1624,11 @@ __EOF__
       requests:
         cpu: 500m
         memory: 500Mi
+  federatoraiPostgreSQL:
+    resources:
+      requests:
+        cpu: 500m
+        memory: 500Mi
 __EOF__
         elif [ "${ENABLE_RESOURCE_REQUIREMENT}" != "y" ] && [ "$storage_type" = "persistent" ]; then
             cat >> ${alamedaservice_example} << __EOF__
@@ -1633,6 +1649,14 @@ __EOF__
       accessModes:
         - ReadWriteOnce
   fedemeterInfluxdb:
+    storages:
+    - usage: data
+      type: pvc
+      size: 10Gi
+      class: ${storage_class}
+      accessModes:
+        - ReadWriteOnce
+  federatoraiPostgreSQL:
     storages:
     - usage: data
       type: pvc
