@@ -4934,6 +4934,7 @@ spec:
           - keycode
           - version
           type: object
+          x-kubernetes-preserve-unknown-fields: true
         status:
           description: AlamedaServiceStatus defines the observed state of AlamedaService
           properties:
