@@ -24,7 +24,7 @@ show_usage()
         For K8S:
             [-i] # Install Nginx on local Kubernetes cluster
                 Requirement:
-                    [-a <cluster_name> -u <username>:<password>] 
+                    [-a <cluster_name> -u <username>:<password>]
                     Specify local Kubernetes cluster name and Federator.ai username/password
             [-k] # Remove Nginx
             [-b] # Retrigger ab test inside preloader pod
@@ -162,6 +162,18 @@ wait_until_data_pump_finish()
         echo "Waiting for data pump to finish ..."
         if [[ "`kubectl logs -n $install_namespace $current_preloader_pod_name | egrep "Succeed to generate pods historical metrics|Succeed to generate nodes historical metrics" | wc -l`" -gt "1" ]]; then
             echo -e "\n$(tput setaf 6)The data pump is finished.$(tput sgr 0)"
+            starttime_utc="$(kubectl logs -n $install_namespace $current_preloader_pod_name|grep 'Start PreLoader agent'|awk '{print $1}')"
+            endtime_utc="$(kubectl logs -n $install_namespace $current_preloader_pod_name|grep 'Succeed to'|tail -1|awk '{print $1}')"
+            if [ "$starttime_utc" != "" ] && [ "$endtime_utc" != "" ]; then
+                startime_timestamp="$(date -d "$starttime_utc" +%s)"
+                endtime_timestamp="$(date -d "$endtime_utc" +%s)"
+                if [ "$startime_timestamp" != "" ] && [ "$endtime_timestamp" != "" ]; then
+                    duration_seconds="$(($endtime_timestamp-$startime_timestamp))"
+                    duration_time=$(date -d @${duration_seconds} +"%H:%M:%S" -u)
+                    echo "Pumping duration in seconds = $duration_seconds" |tee -a $debug_log
+                    echo -e "Pumping duration(H:M:S) = $duration_time" |tee -a $debug_log
+                fi
+            fi
             return 0
         fi
     fi
@@ -185,6 +197,26 @@ get_current_executor_name()
 {
     current_executor_pod_name="`kubectl get pods -n $install_namespace |grep "alameda-executor-"|awk '{print $1}'|head -1`"
     echo "current_executor_pod_name = $current_executor_pod_name"
+}
+
+display_resources_detail()
+{
+    influxdb_pod_name="`kubectl get pods -n $install_namespace |grep "alameda-influxdb-"|awk '{print $1}'|head -1`"
+    total_pods="$(kubectl exec $influxdb_pod_name -n $install_namespace -- influx -ssl -unsafeSsl -precision rfc3339 \
+        -username admin -password adminpass -database alameda_cluster_status -format 'csv' -execute \
+        'select "policy","name","namespace" from pod' 2>/dev/null|sed 1d)"
+    total_pod_number="$(echo "$total_pods"|wc -l)"
+    total_namespace_number="$(echo "$total_pods"|cut -d ',' -f 5|sort|uniq|wc -l)"
+    total_node_number="$(kubectl exec $influxdb_pod_name -n $install_namespace -- influx -ssl -unsafeSsl -precision rfc3339 \
+        -username admin -password adminpass -database alameda_cluster_status -format 'csv' -execute \
+        'select * from node' 2>/dev/null|sed 1d|wc -l)"
+    total_vm_number=$(kubectl exec $influxdb_pod_name -n $install_namespace -- influx -ssl -unsafeSsl -precision rfc3339 \
+        -username admin -password adminpass -database alameda_cluster_status -format 'csv' -execute \
+        "select * from node where type='vm'" 2>/dev/null|sed 1d|wc -l)
+    echo -e "Number of target pod = $total_pod_number" |tee -a $debug_log
+    echo -e "Number of target namespace = $total_namespace_number" |tee -a $debug_log
+    echo -e "Number of target node = $total_node_number" |tee -a $debug_log
+    echo -e "Number of target vm = $total_vm_number" |tee -a $debug_log
 }
 
 _do_cluster_status_verify()
@@ -363,6 +395,7 @@ run_preloader_command()
 
     start=`date +%s`
     echo -e "\n$(tput setaf 6)Running preloader in $running_mode mode...$(tput sgr 0)"
+    display_resources_detail
     get_current_preloader_name
     if [ "$current_preloader_pod_name" = "" ]; then
         echo -e "\n$(tput setaf 1)ERROR! Can't find installed preloader pod.$(tput sgr 0)"
@@ -1175,7 +1208,7 @@ check_needed_commands()
         echo "Please intall jq command by following steps:"
         echo "a) curl -sLo jq https://github.com/stedolan/jq/releases/download/jq-1.6/jq-linux64"
         echo "b) chmod +x jq"
-        echo "c) mv jq /usb/bin"
+        echo "c) mv jq /usr/bin"
         leave_prog
         exit 8
     fi
@@ -1202,19 +1235,20 @@ add_alamedascaler_for_nginx()
         # Create new scaler
         json_data="{\"data\":[{\"object_meta\":{\"name\":\"${alamedascaler_name}\",\"namespace\":\"${install_namespace}\"\
         ,\"nodename\":\"\",\"clustername\":\"\",\"uid\":\"\",\"creationtimestamp\":0},\"target_cluster_name\":\"${cluster_name}\",\
-        \"correlation_analysis\":2,\"controllers\":[{\"evictable\":{\"value\":false},\"enable_execution\":{\"value\":false},\
+        \"correlation_analysis\":2,\"controllers\":[{\"evictable\":{\"value\":${evictable_option}},\"enable_execution\":{\"value\":false},\
         \"scaling_type\":${autoscaling_method},\"application_type\":\"generic\",\"generic\":{\"target\":{\"namespace\":\"${nginx_ns}\",\
         \"name\":\"${nginx_name}\",\"controller_kind\":${kind_type}},\"hpa_parameters\":{\"min_replicas\":{\"value\":1},\
         \"max_replicas\":40}},\"metrics\":[]}]}]}"
 
         rest_pod_name="`kubectl get pods -n ${install_namespace} | grep "federatorai-rest-" | awk '{print $1}' | head -1`"
-        create_return_code="$(kubectl -n ${install_namespace} exec -it ${rest_pod_name} -- \
-        curl -s -X POST -w "%{http_code}" -o /dev/null -H "Content-Type: application/json" \
+        create_response="$(kubectl -n ${install_namespace} exec -t ${rest_pod_name} -- \
+        curl -s -X POST -v -H "Content-Type: application/json" \
             -u "${auth_username}:${auth_password}" \
             -d "${json_data}" \
-            http://127.0.0.1:5055/apis/v1/configs/scaler)"
-        if [ "$create_return_code" != "200" ]; then
+            http://127.0.0.1:5055/apis/v1/configs/scaler 2>&1)"
+        if [ "`echo \"${create_response}\" | grep 'HTTP/1.1 200 '`" = "" ]; then
             echo -e "\n$(tput setaf 1)Error! Create alamedascaler for NGINX app failed.$(tput sgr 0)"
+            echo -e "The request response shows as following.\n${create_response}\n"
             leave_prog
             exit 8
         fi
@@ -1608,6 +1642,11 @@ disable_preloader_in_alamedaservice()
 
 clean_environment_operations()
 {
+    get_current_preloader_name
+    if [ "$current_preloader_pod_name" != "" ]; then
+        echo -e "Deleting preloader pod to renew the pod state..."
+        kubectl delete pod -n $install_namespace $current_preloader_pod_name
+    fi
     cleanup_influxdb_preloader_related_contents
     cleanup_influxdb_prediction_related_contents
     cleanup_alamedaai_models
@@ -1828,9 +1867,11 @@ fi
 if [ "$data_verification_enabled" = "y" ]; then
     # PredictOnly
     autoscaling_method="1"
+    evictable_option="false"
 else
     # HPA
     autoscaling_method="2"
+    evictable_option="true"
 fi
 
 if [ "$nginx_name_specified" = "y" ]; then
