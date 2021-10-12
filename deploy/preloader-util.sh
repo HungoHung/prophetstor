@@ -410,7 +410,7 @@ run_preloader_command()
 
     if [ "$disable_all_node_metrics" = "y" ]; then
         echo -e "$(tput setaf 6)Disable load on empty node.$(tput sgr 0)"
-        kubectl exec -n $install_namespace $current_preloader_pod_name -- /opt/alameda/federatorai-agent/bin/transmitter enable --state=true --DisableLoadAllNodeMetrics=true
+        kubectl exec -n $install_namespace $current_preloader_pod_name -- /opt/alameda/federatorai-agent/bin/transmitter enable --state=true --DisableLoadAllNodeMetrics=true --random=true
     else
         kubectl exec -n $install_namespace $current_preloader_pod_name -- /opt/alameda/federatorai-agent/bin/transmitter enable
     fi
@@ -1704,6 +1704,7 @@ while getopts "f:n:t:s:x:g:cjdehikprvoyba:u:" o; do
             remove_nginx="y"
             ;;
         j)
+            # For data verifier
             disable_all_node_metrics="y"
             ;;
         c)
@@ -1741,9 +1742,6 @@ while getopts "f:n:t:s:x:g:cjdehikprvoyba:u:" o; do
         #     autoscaling_specified="y"
         #     x_arg=${OPTARG}
         #     ;;
-        y)
-            data_verification_enabled="y"
-            ;;
         g)
             traffic_ratio_specified="y"
             g_arg=${OPTARG}
@@ -1900,10 +1898,12 @@ fi
 # else
 #     autoscaling_method="hpa"
 # fi
-if [ "$data_verification_enabled" = "y" ]; then
+if [ "$disable_all_node_metrics" = "y" ]; then
+    # For data verifier
     # PredictOnly
     autoscaling_method="1"
     evictable_option="false"
+    enable_execution="false"
 else
     # HPA
     autoscaling_method="2"
