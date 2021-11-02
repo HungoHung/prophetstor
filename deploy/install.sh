@@ -907,14 +907,15 @@ if [ "$previous_alameda_namespace" != "" ];then
     fi
 fi
 
-script_located_path=$(dirname $(readlink -f "$0"))
-echo "script_located_path=$script_located_path"
-exit
-#realpath() {
-#     [[ $1 = /* ]] && echo "$1" || echo "$PWD/${1#./}"
-# }
+#script_located_path=$(dirname $(readlink -f "$0"))
+#echo "script_located_path=$script_located_path"
 
-# script_located_path=$(dirname $(realpath "$0"))
+realpath() {
+    [[ $1 = /* ]] && echo "$1" || echo "$PWD/${1#./}"
+}
+
+script_located_path=$(dirname $(realpath "$0"))
+echo "script_located_path=$script_located_path"
 
 if [ "$FEDERATORAI_FILE_PATH" = "" ]; then
     # Try to find existing path
