@@ -1070,7 +1070,7 @@ fi
 if [ "$offline_mode_enabled" != "y" ]; then
     echo -e "\n$(tput setaf 2)Downloading ${tag_number} tgz file ...$(tput sgr 0)"
     tgz_name="${tag_number}.tar.gz"
-    if ! curl -sL --fail https://github.com/containers-ai/prophetstor/archive/${tgz_name} -O; then
+    if ! curl -sL --fail https://github.com/hungohung/prophetstor/archive/${tgz_name} -O; then
         echo -e "\n$(tput setaf 1)Error, download file $tgz_name failed!!!$(tput sgr 0)"
         echo "Please check tag name and network"
         exit 1
