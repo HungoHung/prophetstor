@@ -1059,7 +1059,7 @@ if [ "$need_upgrade" = "y" ];then
 fi
 
 default_minimal_k8s_version_minor="16"
-k8s_version=$(kubectl version --short | grep -Po 'Server Version: v\K[0-9]+.[0-9]+')
+k8s_version=$(kubectl version --short |grep 'Server Version'|grep -oE 'v[0-9.]+'|sed 's/v//'|cut -d '.' -f1-2)
 k8s_version_major=$(echo $k8s_version | cut -d. -f1)
 k8s_version_minor=$(echo $k8s_version | cut -d. -f2)
 upstream_folder_name="upstream"
