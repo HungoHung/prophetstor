@@ -855,6 +855,17 @@ if [ "$offline_mode_enabled" != "y" ]; then
     fi
 fi
 
+unameOut="$(uname -s)"
+case "${unameOut}" in
+    Linux*)
+        machineType=Linux;;
+    Darwin*)
+        machineType=Mac;;
+    *)
+        echo -e "\n$(tput setaf 1)Error! Unsupported machine type (${unameOut}).$(tput sgr 0)"
+        exit
+esac
+
 previous_alameda_namespace="`kubectl get alamedaservice --all-namespaces 2>/dev/null|tail -1|awk '{print $1}'`"
 previous_tag="`kubectl get alamedaservices -n $previous_alameda_namespace -o custom-columns=VERSION:.spec.version 2>/dev/null|grep -v VERSION|head -1`"
 previous_alamedaservice="`kubectl get alamedaservice -n $previous_alameda_namespace -o custom-columns=NAME:.metadata.name 2>/dev/null|grep -v NAME|head -1`"
@@ -1111,9 +1122,19 @@ fi
 # Modify federator.ai operator yaml(s)
 # for tag
 if [ "$aws_mode" = "y" ]; then
-    sed -i "s|quay.io/prophetstor/federatorai-operator-ubi:latest|$ecr_url|g" 03*.yaml
-    # Change command to /start.sh
-    sed -i "/- federatorai-operator/ {n; :a; /- federatorai-operator/! {N; ba;}; s/- federatorai-operator/- \/start.sh/; :b; n; $! bb}" 03*.yaml
+    if [ "$machineType" = "Linux" ]; then
+        sed -i "s|quay.io/prophetstor/federatorai-operator-ubi:latest|$ecr_url|g" 03*.yaml
+        # Change command to /start.sh
+        sed -i "/- federatorai-operator/ {n; :a; /- federatorai-operator/! {N; ba;}; s/- federatorai-operator/- \/start.sh/; :b; n; $! bb}" 03*.yaml
+    else
+        # Mac
+        sed -i "" "s|quay.io/prophetstor/federatorai-operator-ubi:latest|$ecr_url|g" 03*.yaml
+        # Change command to /start.sh
+        sed '1!G;h;$!d' `ls 03*.yaml` |awk '/- federatorai-operator/&&!x{sub("- federatorai-operator","- /start.sh");x=1}1'|sed '1!G;h;$!d' > 03tmp
+        mv 03tmp `ls 03*.yaml`
+    fi
+    echo 'hungo test'
+    exit
 cat >> 01*.yaml << __EOF__
   annotations:
     eks.amazonaws.com/role-arn: ${role_arn}
