@@ -858,16 +858,19 @@ fi
 unameOut="$(uname -s)"
 case "${unameOut}" in
     Linux*)
-        machine_type=Linux;;
+        machine_type=Linux
         echo "Linux..."
         sed_command="sed -i"
+        ;;
     Darwin*)
-        machine_type=Mac;;
+        machine_type=Mac
         echo "Mac..."
-        sed_command='sed -i ""'
+        sed_command="sed -i \"\""
+        ;;
     *)
         echo -e "\n$(tput setaf 1)Error! Unsupported machine type (${unameOut}).$(tput sgr 0)"
         exit
+        ;;
 esac
 
 previous_alameda_namespace="`kubectl get alamedaservice --all-namespaces 2>/dev/null|tail -1|awk '{print $1}'`"
