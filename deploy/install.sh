@@ -858,9 +858,11 @@ fi
 unameOut="$(uname -s)"
 case "${unameOut}" in
     Linux*)
-        machineType=Linux;;
+        machine_type=Linux;;
+        sed_command="sed -i"
     Darwin*)
-        machineType=Mac;;
+        machine_type=Mac;;
+        sed_command="sed -i \"\""
     *)
         echo -e "\n$(tput setaf 1)Error! Unsupported machine type (${unameOut}).$(tput sgr 0)"
         exit
@@ -1122,14 +1124,12 @@ fi
 # Modify federator.ai operator yaml(s)
 # for tag
 if [ "$aws_mode" = "y" ]; then
-    if [ "$machineType" = "Linux" ]; then
-        sed -i "s|quay.io/prophetstor/federatorai-operator-ubi:latest|$ecr_url|g" 03*.yaml
+    eval $sed_command "s|quay.io/prophetstor/federatorai-operator-ubi:latest|$ecr_url|g" 03*.yaml
+    if [ "$machine_type" = "Linux" ]; then
         # Change command to /start.sh
-        sed -i "/- federatorai-operator/ {n; :a; /- federatorai-operator/! {N; ba;}; s/- federatorai-operator/- \/start.sh/; :b; n; $! bb}" 03*.yaml
+        eval $sed_command "/- federatorai-operator/ {n; :a; /- federatorai-operator/! {N; ba;}; s/- federatorai-operator/- \/start.sh/; :b; n; $! bb}" 03*.yaml
     else
-        # Mac
-        sed -i "" "s|quay.io/prophetstor/federatorai-operator-ubi:latest|$ecr_url|g" 03*.yaml
-        # Change command to /start.sh
+        # Mac # Change command to /start.sh
         sed '1!G;h;$!d' `ls 03*.yaml` |awk '/- federatorai-operator/&&!x{sub("- federatorai-operator","- /start.sh");x=1}1'|sed '1!G;h;$!d' > 03tmp
         mv 03tmp `ls 03*.yaml`
     fi
@@ -1142,15 +1142,15 @@ __EOF__
 else
     # Handle new aws operator url only case (ignore aws_mode enabled or not)
     if [ "$ECR_URL" != "" ]; then
-        sed -i "s|quay.io/prophetstor/federatorai-operator-ubi:latest|$ECR_URL|g" 03*.yaml
+        eval $sed_command "s|quay.io/prophetstor/federatorai-operator-ubi:latest|$ECR_URL|g" 03*.yaml
     else
-        sed -i "s/:latest$/:${tag_number}/g" 03*.yaml
+        eval $sed_command "s/:latest$/:${tag_number}/g" 03*.yaml
     fi
 fi
 
 # Specified alternative container image location
 if [ "${RELATED_IMAGE_URL_PREFIX}" != "" ]; then
-    sed -i -e "s%quay.io/prophetstor%${RELATED_IMAGE_URL_PREFIX}%g" 03*.yaml
+    eval $sed_command "s%quay.io/prophetstor%${RELATED_IMAGE_URL_PREFIX}%g" 03*.yaml
 fi
 
 # No need for recent build
@@ -1160,11 +1160,11 @@ fi
 # fi
 
 # for namespace
-sed -i "s/name: federatorai/name: ${install_namespace}/g" 00*.yaml
-sed -i "s|\bnamespace:.*|namespace: ${install_namespace}|g" *.yaml
+eval $sed_command "s/name: federatorai/name: ${install_namespace}/g" 00*.yaml
+eval $sed_command "s|\bnamespace:.*|namespace: ${install_namespace}|g" *.yaml
 
 if [ "${ENABLE_RESOURCE_REQUIREMENT}" = "y" ]; then
-    sed -i -e "/image: /a\          resources:\n            limits:\n              cpu: 4000m\n              memory: 8000Mi\n            requests:\n              cpu: 100m\n              memory: 100Mi" `ls 03*.yaml`
+    eval $sed_command -e "/image: /a\          resources:\n            limits:\n              cpu: 4000m\n              memory: 8000Mi\n            requests:\n              cpu: 100m\n              memory: 100Mi" `ls 03*.yaml`
 fi
 
 if [ "$need_upgrade" = "y" ];then
@@ -1265,10 +1265,10 @@ if [ "$ALAMEDASERVICE_FILE_PATH" = "" ]; then
 
     # Specified alternative container image location
     if [ "${RELATED_IMAGE_URL_PREFIX}" != "" ]; then
-        sed -i "s|imageLocation:.*|imageLocation: ${RELATED_IMAGE_URL_PREFIX}|g" ${alamedaservice_example}
+        eval $sed_command "s|imageLocation:.*|imageLocation: ${RELATED_IMAGE_URL_PREFIX}|g" ${alamedaservice_example}
     fi
     # Specified version tag
-    sed -i "s/version: latest/version: ${tag_number}/g" ${alamedaservice_example}
+    eval $sed_command "s/version: latest/version: ${tag_number}/g" ${alamedaservice_example}
 
     echo "========================================"
 
@@ -1370,7 +1370,7 @@ if [ "$ALAMEDASERVICE_FILE_PATH" = "" ]; then
 
     if [ "$need_upgrade" != "y" ]; then
         # First time installation case
-        sed -i "s|\bnamespace:.*|namespace: ${install_namespace}|g" ${alamedaservice_example}
+        eval $sed_command "s|\bnamespace:.*|namespace: ${install_namespace}|g" ${alamedaservice_example}
 
         # if [ "$set_prometheus_rule_to" = "y" ]; then
         #     sed -i "s|\bprometheusService:.*|prometheusService: ${prometheus_address}|g" ${alamedaservice_example}
@@ -1380,7 +1380,7 @@ if [ "$ALAMEDASERVICE_FILE_PATH" = "" ]; then
         # fi
 
         if [[ "$storage_type" == "persistent" ]]; then
-            sed -i '/- usage:/,+10d' ${alamedaservice_example}
+            eval $sed_command '/- usage:/,+10d' ${alamedaservice_example}
             cat >> ${alamedaservice_example} << __EOF__
     - usage: log
       type: pvc
