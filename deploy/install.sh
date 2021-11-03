@@ -859,10 +859,12 @@ unameOut="$(uname -s)"
 case "${unameOut}" in
     Linux*)
         machine_type=Linux;;
+        echo "Linux..."
         sed_command="sed -i"
     Darwin*)
         machine_type=Mac;;
-        sed_command="sed -i \"\""
+        echo "Mac..."
+        sed_command='sed -i ""'
     *)
         echo -e "\n$(tput setaf 1)Error! Unsupported machine type (${unameOut}).$(tput sgr 0)"
         exit
