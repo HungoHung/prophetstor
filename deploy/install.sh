@@ -1409,7 +1409,7 @@ if [ "$ALAMEDASERVICE_FILE_PATH" = "" ]; then
             sed -i "s|\bnamespace:.*|namespace: ${install_namespace}|g" ${alamedaservice_example}
         else
             # Mac
-            sed -i "" "s|\bnamespace:.*|namespace: ${install_namespace}|g" ${alamedaservice_example}
+            sed -i "" "s| namespace:.*| namespace: ${install_namespace}|g" ${alamedaservice_example}
         fi
 
         # if [ "$set_prometheus_rule_to" = "y" ]; then
