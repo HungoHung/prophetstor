@@ -927,7 +927,6 @@ realpath() {
 }
 
 script_located_path=$(dirname $(realpath "$0"))
-echo "script_located_path=$script_located_path"
 
 if [ "$FEDERATORAI_FILE_PATH" = "" ]; then
     # Try to find existing path
